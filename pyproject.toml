@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "remote-graph-ssh"
+version = "0.1.0"
+description = "Remote graphical access over SSH with X11, clipboard sync, and SFTP file transfer"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "asyncssh>=2.14.2",
+  "cryptography>=42.0.0",
+  "Pillow>=10.0.0",
+  "mss>=9.0.1",
+  "python-xlib>=0.33",
+  "PySide6>=6.7.0",
+]
+
+[project.scripts]
+remote-ssh-desktop = "remote_ssh_desktop.__main__:main"
+remote-ssh-desktop-client = "remote_ssh_desktop.client.main:main"
+remote-ssh-desktop-server = "remote_ssh_desktop.server.main:main"
+remote-ssh-desktop-keygen = "remote_ssh_desktop.crypto.keygen:main"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+include = ["remote_ssh_desktop*"]
