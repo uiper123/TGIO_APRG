@@ -2,18 +2,70 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import os
+import platform
+import shlex
+import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from types import SimpleNamespace
+from typing import Any, Callable
 
 import asyncssh
 from PySide6.QtCore import QPointF, QThread, Qt, Signal
 from PySide6.QtGui import QAction, QColor, QImage, QKeyEvent, QKeySequence, QPainter
-from PySide6.QtWidgets import QApplication, QCheckBox, QFileDialog, QFormLayout, QFrame, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QPushButton, QSpinBox, QTabWidget, QToolBar, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QApplication,
+    QCheckBox,
+    QFileDialog,
+    QFormLayout,
+    QFrame,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QInputDialog,
+    QLineEdit,
+    QListWidget,
+    QListWidgetItem,
+    QMainWindow,
+    QMessageBox,
+    QProgressBar,
+    QPushButton,
+    QSpinBox,
+    QTabWidget,
+    QToolBar,
+    QVBoxLayout,
+    QWidget,
+)
 
-from ..common.protocol import FRAME_CLIPBOARD, FRAME_CONTROL, FRAME_INPUT, FRAME_STATS, FRAME_VIDEO, decode_message, pack_frame, read_frame
-from ..crypto.keygen import save_keypair
+from remote_ssh_desktop.common.files import join_remote_jail, normalize_remote_rel
+from remote_ssh_desktop.common.protocol import (
+    FRAME_CLIPBOARD,
+    FRAME_CONTROL,
+    FRAME_INPUT,
+    FRAME_STATS,
+    FRAME_VIDEO,
+    PROTOCOL_VERSION,
+    decode_message,
+    pack_frame,
+    read_frame,
+)
+from remote_ssh_desktop.crypto.keygen import authorized_keys_line, save_keypair
+
+
+def qt_user_role():
+    return getattr(getattr(Qt, "ItemDataRole", Qt), "UserRole")
+
+
+def qt_button(button, left=1, middle=2, right=3) -> int:
+    mouse = getattr(Qt, "MouseButton", Qt)
+    mapping = {
+        getattr(mouse, "LeftButton"): left,
+        getattr(mouse, "MiddleButton"): middle,
+        getattr(mouse, "RightButton"): right,
+    }
+    return mapping.get(button, left)
 
 
 @dataclass(slots=True)
@@ -24,12 +76,42 @@ class ClientConfig:
     password: str = ""
     key_file: str = ""
     key_passphrase: str = ""
-    remote_command: str = "python -m remote_ssh_desktop.server.main --proxy --session-id {session_id}"
+    remote_command: str = (
+        "python -m remote_ssh_desktop.server.main --proxy --session-id {session_id} "
+        "--screen {screen} --fps {fps} --quality {quality} --idle-timeout {idle_timeout} "
+        "{persistent_flag} {clipboard_flag} --clipboard-max-bytes {clipboard_max_bytes} "
+        "--shared-folder {shared_folder}"
+    )
     session_id: str = ""
     screen: tuple[int, int] = (1920, 1080)
-    persistent: bool = True
-    shared_folder: str = ""
+    fps: int = 18
+    quality: int = 80
+    persistent: bool = False
+    idle_timeout: int = 300
+    shared_folder: str = "~/RemoteShared"
     known_hosts: str = ""
+    clipboard_enabled: bool = True
+    clipboard_max_bytes: int = 1_000_000
+    reconnect_enabled: bool = True
+    reconnect_attempts: int = 5
+    reconnect_delay: float = 2.0
+
+    @property
+    def screen_text(self) -> str:
+        return f"{self.screen[0]}x{self.screen[1]}"
+
+    def format_remote_command(self) -> str:
+        return self.remote_command.format(
+            session_id=shlex.quote(self.session_id),
+            screen=shlex.quote(self.screen_text),
+            fps=self.fps,
+            quality=self.quality,
+            idle_timeout=self.idle_timeout,
+            persistent_flag="--persistent" if self.persistent else "",
+            clipboard_flag="" if self.clipboard_enabled else "--no-clipboard",
+            clipboard_max_bytes=self.clipboard_max_bytes,
+            shared_folder=shlex.quote(self.shared_folder),
+        )
 
 
 class TransportThread(QThread):
@@ -38,6 +120,7 @@ class TransportThread(QThread):
     sessionInfo = Signal(dict)
     clipboardReceived = Signal(str)
     disconnected = Signal(str)
+    transferProgress = Signal(str, int, int)
 
     def __init__(self, config: ClientConfig):
         super().__init__()
@@ -45,25 +128,43 @@ class TransportThread(QThread):
         self._loop: asyncio.AbstractEventLoop | None = None
         self._submit_queue: asyncio.Queue[bytes] | None = None
         self._running = True
-        self._conn = None
+        self._conn: asyncssh.SSHClientConnection | None = None
         self._proc = None
         self._sftp = None
+        self._remote_shared_root = config.shared_folder
+        self._last_pings: dict[float, float] = {}
+        self._frames_seen = 0
+        self._dropped_frames = 0
+        self._active_transfers: set[str] = set()
+        self._cancelled_transfers: set[str] = set()
 
     def run(self) -> None:
         try:
             self._loop = asyncio.new_event_loop()
             asyncio.set_event_loop(self._loop)
-            self._loop.run_until_complete(self._connect())
+            self._loop.run_until_complete(self._run_with_reconnect())
         except Exception as exc:
             self.disconnected.emit(str(exc))
         finally:
             if self._loop is not None:
-                with contextlib.suppress(Exception):
-                    self._loop.close()
+                self._loop.close()
                 self._loop = None
 
+    def stop(self) -> None:
+        self._running = False
+        if self._loop:
+            self._loop.call_soon_threadsafe(lambda: asyncio.create_task(self.close()))
+
+    def cancel_transfers(self) -> None:
+        self._cancelled_transfers.update(self._active_transfers)
+
+    def _check_cancelled(self, transfer_id: str) -> None:
+        if transfer_id in self._cancelled_transfers:
+            self._cancelled_transfers.discard(transfer_id)
+            raise RuntimeError("transfer cancelled")
+
     def submit_frame(self, kind: int, message: dict[str, Any] | bytes | str) -> None:
-        if self._loop is None or self._submit_queue is None:
+        if self._loop is None or self._submit_queue is None or not self._running:
             return
         raw = pack_frame(kind, message)
         self._loop.call_soon_threadsafe(self._submit_queue.put_nowait, raw)
@@ -72,6 +173,23 @@ class TransportThread(QThread):
         if self._loop is None:
             raise RuntimeError("transport not started")
         return asyncio.run_coroutine_threadsafe(coro, self._loop)
+
+    async def _run_with_reconnect(self) -> None:
+        attempts = max(1, self.config.reconnect_attempts if self.config.reconnect_enabled else 1)
+        for attempt in range(1, attempts + 1):
+            if not self._running:
+                return
+            try:
+                await self._connect_once()
+            except Exception as exc:
+                if not self._running:
+                    return
+                if attempt >= attempts:
+                    raise
+                self.statusChanged.emit(f"reconnecting after error: {exc}")
+                await asyncio.sleep(self.config.reconnect_delay)
+            else:
+                return
 
     async def _writer_loop(self, writer) -> None:
         assert self._submit_queue is not None
@@ -84,18 +202,43 @@ class TransportThread(QThread):
         while self._running:
             frame = await read_frame(reader)
             if frame.kind == FRAME_VIDEO:
+                self._frames_seen += 1
                 self.videoFrame.emit(frame.payload)
             elif frame.kind == FRAME_CONTROL:
-                message = decode_message(frame.payload)
-                if message.get("t") == "session":
+                message = decode_message(frame.payload) if frame.payload else {}
+                t = message.get("t")
+                if t == "session":
+                    root = message.get("shared_folder")
+                    if root:
+                        self._remote_shared_root = str(root)
                     self.sessionInfo.emit(message)
+                elif t == "pong":
+                    await self._handle_pong(message)
+                elif t == "error":
+                    self.statusChanged.emit(f"server error: {message.get('message', message)}")
             elif frame.kind == FRAME_CLIPBOARD:
-                message = decode_message(frame.payload)
+                message = decode_message(frame.payload) if frame.payload else {}
                 if message.get("format") == "text":
                     self.clipboardReceived.emit(str(message.get("data", "")))
 
-    async def _connect(self) -> None:
-        self._submit_queue = asyncio.Queue()
+    async def _ping_loop(self) -> None:
+        while self._running:
+            ts = time.time()
+            self._last_pings[ts] = time.monotonic()
+            self.submit_frame(FRAME_CONTROL, {"t": "ping", "ts": ts})
+            await asyncio.sleep(2.0)
+
+    async def _handle_pong(self, message: dict[str, Any]) -> None:
+        ts = float(message.get("ts", 0.0) or 0.0)
+        sent_at = self._last_pings.pop(ts, None)
+        if sent_at is None:
+            return
+        latency_ms = int((time.monotonic() - sent_at) * 1000)
+        self.submit_frame(FRAME_STATS, {"t": "stats", "latency_ms": latency_ms, "dropped": self._dropped_frames})
+        self.statusChanged.emit(f"connected — {latency_ms} ms")
+
+    async def _connect_once(self) -> None:
+        self._submit_queue = asyncio.Queue(maxsize=128)
         kwargs: dict[str, Any] = {
             "host": self.config.host,
             "port": self.config.port,
@@ -108,14 +251,15 @@ class TransportThread(QThread):
             kwargs["client_keys"] = [self.config.key_file]
             if self.config.key_passphrase:
                 kwargs["passphrase"] = self.config.key_passphrase
+        self.statusChanged.emit("connecting…")
         self._conn = await asyncssh.connect(**kwargs)
-        cmd = self.config.remote_command.format(session_id=self.config.session_id)
+        cmd = self.config.format_remote_command()
         self._proc = await self._conn.create_process(cmd)
         self._sftp = await self._conn.start_sftp_client()
         self.statusChanged.emit("connected")
         hello = {
             "t": "hello",
-            "proto": 1,
+            "proto": PROTOCOL_VERSION,
             "codec": "jpeg",
             "view": list(self.config.screen),
             "user": self.config.username,
@@ -125,42 +269,128 @@ class TransportThread(QThread):
             "persistent": self.config.persistent,
             "shared_folder": self.config.shared_folder,
             "session_id": self.config.session_id,
+            "clipboard_enabled": self.config.clipboard_enabled,
         }
         self.submit_frame(FRAME_CONTROL, hello)
-        writer_task = asyncio.create_task(self._writer_loop(self._proc.stdin))
-        reader_task = asyncio.create_task(self._reader_loop(self._proc.stdout))
-        done, pending = await asyncio.wait({writer_task, reader_task}, return_when=asyncio.FIRST_COMPLETED)
+        tasks = {
+            asyncio.create_task(self._writer_loop(self._proc.stdin)),
+            asyncio.create_task(self._reader_loop(self._proc.stdout)),
+            asyncio.create_task(self._ping_loop()),
+        }
+        done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
         for task in pending:
             task.cancel()
+        for task in done:
+            exc = task.exception()
+            if exc:
+                raise exc
 
-    async def listdir(self, path: str):
+    def remote_path(self, relative: str = "") -> str:
+        return join_remote_jail(self._remote_shared_root, relative)
+
+    async def listdir(self, relative: str):
         if self._sftp is None:
             raise RuntimeError("SFTP not ready")
-        return await self._sftp.listdir_attr(path)
+        entries = []
+        for entry in await self._sftp.listdir_attr(self.remote_path(relative)):
+            name = getattr(entry, "filename", "")
+            attrs = getattr(entry, "attrs", entry)
+            entries.append(
+                SimpleNamespace(
+                    filename=name,
+                    size=int(getattr(attrs, "size", getattr(attrs, "st_size", 0)) or 0),
+                    permissions=int(getattr(attrs, "permissions", getattr(attrs, "st_mode", 0)) or 0),
+                )
+            )
+        return entries
 
-    async def put(self, local_path: str, remote_path: str):
+    async def mkdir(self, relative: str):
         if self._sftp is None:
             raise RuntimeError("SFTP not ready")
-        return await self._sftp.put(local_path, remote_path)
+        with contextlib.suppress(Exception):
+            await self._sftp.mkdir(self.remote_path(relative))
 
-    async def get(self, remote_path: str, local_path: str):
+    async def put_file(self, local_path: str, remote_relative: str, transfer_id: str):
         if self._sftp is None:
             raise RuntimeError("SFTP not ready")
-        return await self._sftp.get(remote_path, local_path)
+        self._active_transfers.add(transfer_id)
+        try:
+            local = Path(local_path)
+            remote = self.remote_path(remote_relative)
+            size = local.stat().st_size
+            sent = 0
+            with contextlib.suppress(Exception):
+                attrs = await self._sftp.stat(remote)
+                sent = min(int(getattr(attrs, "size", getattr(attrs, "st_size", 0)) or 0), size)
+            mode = "ab" if sent else "wb"
+            async with self._sftp.open(remote, mode) as dst:
+                with local.open("rb") as src:
+                    src.seek(sent)
+                    self.transferProgress.emit(transfer_id, sent, size)
+                    while True:
+                        self._check_cancelled(transfer_id)
+                        chunk = src.read(1024 * 256)
+                        if not chunk:
+                            break
+                        await dst.write(chunk)
+                        sent += len(chunk)
+                        self.transferProgress.emit(transfer_id, sent, size)
+            self.submit_frame(FRAME_CONTROL, {"t": "file_put_done", "path": remote_relative, "size": size})
+        finally:
+            self._active_transfers.discard(transfer_id)
+
+    async def get_file(self, remote_relative: str, local_path: str, transfer_id: str):
+        if self._sftp is None:
+            raise RuntimeError("SFTP not ready")
+        self._active_transfers.add(transfer_id)
+        try:
+            remote = self.remote_path(remote_relative)
+            attrs = await self._sftp.stat(remote)
+            size = int(getattr(attrs, "size", getattr(attrs, "st_size", 0)) or 0)
+            local = Path(local_path)
+            got = local.stat().st_size if local.exists() else 0
+            if got > size:
+                got = 0
+            mode = "ab" if got else "wb"
+            async with self._sftp.open(remote, "rb") as src:
+                if got:
+                    src.seek(got)
+                with local.open(mode) as dst:
+                    self.transferProgress.emit(transfer_id, got, size)
+                    while True:
+                        self._check_cancelled(transfer_id)
+                        chunk = await src.read(1024 * 256)
+                        if not chunk:
+                            break
+                        dst.write(chunk)
+                        got += len(chunk)
+                        self.transferProgress.emit(transfer_id, got, size)
+        finally:
+            self._active_transfers.discard(transfer_id)
+
+    async def close(self) -> None:
+        self._running = False
+        if self._proc is not None:
+            with contextlib.suppress(Exception):
+                self._proc.stdin.write_eof()
+        if self._conn is not None:
+            self._conn.close()
+            with contextlib.suppress(Exception):
+                await self._conn.wait_closed()
 
 
 class AsyncTask(QThread):
     success = Signal(object)
     failure = Signal(str)
 
-    def __init__(self, transport: TransportThread, coro):
+    def __init__(self, transport: TransportThread, coro_factory: Callable[[], Any]):
         super().__init__()
         self.transport = transport
-        self.coro = coro
+        self.coro_factory = coro_factory
 
     def run(self) -> None:
         try:
-            result = self.transport.run_coro(self.coro).result()
+            result = self.transport.run_coro(self.coro_factory()).result()
         except Exception as exc:
             self.failure.emit(str(exc))
         else:
@@ -173,7 +403,7 @@ class RemoteDisplayWidget(QFrame):
 
     def __init__(self):
         super().__init__()
-        self.setFocusPolicy(Qt.StrongFocus)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setAcceptDrops(True)
         self._image = QImage()
         self._server_size = (1920, 1080)
@@ -192,7 +422,7 @@ class RemoteDisplayWidget(QFrame):
         if self._image.isNull():
             return None
         from PySide6.QtCore import QRect
-        scaled = self._image.scaled(self.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        scaled = self._image.scaled(self.size(), Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
         return QRect((self.width() - scaled.width()) // 2, (self.height() - scaled.height()) // 2, scaled.width(), scaled.height())
 
     def _map_point(self, pos: QPointF):
@@ -212,15 +442,14 @@ class RemoteDisplayWidget(QFrame):
                 painter.drawImage(rect, self._image)
 
     def mousePressEvent(self, event):
+        self.setFocus(Qt.FocusReason.MouseFocusReason)
         mapped = self._map_point(event.position())
         if mapped:
-            button = {Qt.LeftButton: 1, Qt.MiddleButton: 2, Qt.RightButton: 3}.get(event.button(), 1)
             self.inputMessage.emit({"t": "mouse_move", "x": mapped[0], "y": mapped[1]})
-            self.inputMessage.emit({"t": "mouse_btn", "button": button, "down": True})
+            self.inputMessage.emit({"t": "mouse_btn", "button": qt_button(event.button()), "down": True})
 
     def mouseReleaseEvent(self, event):
-        button = {Qt.LeftButton: 1, Qt.MiddleButton: 2, Qt.RightButton: 3}.get(event.button(), 1)
-        self.inputMessage.emit({"t": "mouse_btn", "button": button, "down": False})
+        self.inputMessage.emit({"t": "mouse_btn", "button": qt_button(event.button()), "down": False})
 
     def mouseMoveEvent(self, event):
         mapped = self._map_point(event.position())
@@ -250,15 +479,16 @@ class RemoteDisplayWidget(QFrame):
 
 
 def qt_modifiers(event: QKeyEvent) -> list[str]:
-    mods = []
+    mods: list[str] = []
     state = event.modifiers()
-    if state & Qt.ControlModifier:
+    km = getattr(Qt, "KeyboardModifier", Qt)
+    if state & km.ControlModifier:
         mods.append("ctrl")
-    if state & Qt.AltModifier:
+    if state & km.AltModifier:
         mods.append("alt")
-    if state & Qt.ShiftModifier:
+    if state & km.ShiftModifier:
         mods.append("shift")
-    if state & Qt.MetaModifier:
+    if state & km.MetaModifier:
         mods.append("super")
     return mods
 
@@ -266,31 +496,32 @@ def qt_modifiers(event: QKeyEvent) -> list[str]:
 def qt_key_to_keysym(event: QKeyEvent) -> str:
     key = event.key()
     text = event.text()
-    if text and len(text) == 1:
+    if text and len(text) == 1 and not event.modifiers() & getattr(Qt, "KeyboardModifier", Qt).ControlModifier:
         return text
+    k = getattr(Qt, "Key", Qt)
     mapping = {
-        Qt.Key_Return: "Return",
-        Qt.Key_Enter: "Return",
-        Qt.Key_Escape: "Escape",
-        Qt.Key_Backspace: "BackSpace",
-        Qt.Key_Tab: "Tab",
-        Qt.Key_Delete: "Delete",
-        Qt.Key_Home: "Home",
-        Qt.Key_End: "End",
-        Qt.Key_PageUp: "Page_Up",
-        Qt.Key_PageDown: "Page_Down",
-        Qt.Key_Left: "Left",
-        Qt.Key_Right: "Right",
-        Qt.Key_Up: "Up",
-        Qt.Key_Down: "Down",
-        Qt.Key_Space: "space",
-        Qt.Key_Super_L: "Super_L",
-        Qt.Key_Super_R: "Super_R",
-        Qt.Key_Control: "Control_L",
-        Qt.Key_Alt: "Alt_L",
-        Qt.Key_Shift: "Shift_L",
+        k.Key_Return: "Return",
+        k.Key_Enter: "Return",
+        k.Key_Escape: "Escape",
+        k.Key_Backspace: "BackSpace",
+        k.Key_Tab: "Tab",
+        k.Key_Delete: "Delete",
+        k.Key_Home: "Home",
+        k.Key_End: "End",
+        k.Key_PageUp: "Page_Up",
+        k.Key_PageDown: "Page_Down",
+        k.Key_Left: "Left",
+        k.Key_Right: "Right",
+        k.Key_Up: "Up",
+        k.Key_Down: "Down",
+        k.Key_Space: "space",
+        k.Key_Super_L: "Super_L",
+        k.Key_Super_R: "Super_R",
+        k.Key_Control: "Control_L",
+        k.Key_Alt: "Alt_L",
+        k.Key_Shift: "Shift_L",
     }
-    return mapping.get(key, QKeySequence(key).toString() or "")
+    return mapping.get(key, QKeySequence(key).toString() or text or "")
 
 
 class KeyGenDialog(QWidget):
@@ -304,27 +535,37 @@ class KeyGenDialog(QWidget):
         self.out_dir = QLineEdit(str(Path.home() / ".ssh"))
         self.name = QLineEdit("id_remote_ssh_desktop")
         self.passphrase = QLineEdit("")
-        self.passphrase.setEchoMode(QLineEdit.Password)
+        self.passphrase.setEchoMode(QLineEdit.EchoMode.Password)
         self.bits = QSpinBox()
-        self.bits.setRange(1024, 8192)
+        self.bits.setRange(2048, 8192)
         self.bits.setValue(3072)
         self.status = QLabel("")
+        self.helper = QLineEdit("")
+        self.helper.setReadOnly(True)
         btn = QPushButton("Generate")
         btn.clicked.connect(self.generate)
-        layout.addRow("Kind", self.kind)
+        layout.addRow("Kind (ed25519/rsa)", self.kind)
         layout.addRow("Output dir", self.out_dir)
         layout.addRow("Name", self.name)
         layout.addRow("Passphrase", self.passphrase)
         layout.addRow("RSA bits", self.bits)
         layout.addRow(btn)
+        layout.addRow("authorized_keys", self.helper)
         layout.addRow(self.status)
 
     def generate(self):
         try:
-            private_path, public_path = save_keypair(Path(self.out_dir.text()).expanduser(), self.name.text().strip() or "id_remote_ssh_desktop", self.kind.text().strip().lower(), passphrase=self.passphrase.text() or None, bits=self.bits.value())
+            private_path, public_path = save_keypair(
+                Path(self.out_dir.text()).expanduser(),
+                self.name.text().strip() or "id_remote_ssh_desktop",
+                self.kind.text().strip().lower(),
+                passphrase=self.passphrase.text() or None,
+                bits=self.bits.value(),
+            )
         except Exception as exc:
             self.status.setText(str(exc))
             return
+        self.helper.setText(authorized_keys_line(public_path))
         self.status.setText(f"Saved {private_path} and {public_path}")
         self.generated.emit(str(private_path), str(public_path))
 
@@ -337,30 +578,26 @@ class MainWindow(QMainWindow):
         self._tasks: list[QThread] = []
         self._clipboard_from_remote = False
         self._last_remote_clipboard = ""
+        self._remote_rel = ""
+        self._remote_root = "~/RemoteShared"
         self._build_ui()
         self._load_defaults()
 
     def _build_ui(self):
         toolbar = QToolBar()
         self.addToolBar(toolbar)
-        connect_action = QAction("Connect", self)
-        connect_action.triggered.connect(self.connect_session)
-        toolbar.addAction(connect_action)
-        disconnect_action = QAction("Disconnect", self)
-        disconnect_action.triggered.connect(self.disconnect_session)
-        toolbar.addAction(disconnect_action)
-        key_action = QAction("Generate key", self)
-        key_action.triggered.connect(self.open_keygen)
-        toolbar.addAction(key_action)
-        ctrl_alt_del_action = QAction("Ctrl+Alt+Del", self)
-        ctrl_alt_del_action.triggered.connect(lambda: self.send_combo(["ctrl", "alt"], "Delete"))
-        toolbar.addAction(ctrl_alt_del_action)
-        super_action = QAction("Super", self)
-        super_action.triggered.connect(lambda: self.send_key("Super_L"))
-        toolbar.addAction(super_action)
-        esc_action = QAction("Esc", self)
-        esc_action.triggered.connect(lambda: self.send_key("Escape"))
-        toolbar.addAction(esc_action)
+        for text, handler in [
+            ("Connect", self.connect_session),
+            ("Disconnect", self.disconnect_session),
+            ("Fullscreen", self.toggle_fullscreen),
+            ("Generate key", self.open_keygen),
+            ("Ctrl+Alt+Del", lambda: self.send_combo(["ctrl", "alt"], "Delete")),
+            ("Super", lambda: self.send_key("Super_L")),
+            ("Esc", lambda: self.send_key("Escape")),
+        ]:
+            action = QAction(text, self)
+            action.triggered.connect(handler)
+            toolbar.addAction(action)
 
         self.tabs = QTabWidget()
         self.session_tab = QWidget()
@@ -375,19 +612,35 @@ class MainWindow(QMainWindow):
         self.host_edit = QLineEdit()
         self.port_edit = QSpinBox(); self.port_edit.setRange(1, 65535); self.port_edit.setValue(22)
         self.user_edit = QLineEdit()
-        self.password_edit = QLineEdit(); self.password_edit.setEchoMode(QLineEdit.Password)
+        self.password_edit = QLineEdit(); self.password_edit.setEchoMode(QLineEdit.EchoMode.Password)
         self.key_edit = QLineEdit()
-        self.key_pass_edit = QLineEdit(); self.key_pass_edit.setEchoMode(QLineEdit.Password)
-        self.remote_command_edit = QLineEdit("python -m remote_ssh_desktop.server.main --proxy --session-id {session_id}")
+        self.key_pass_edit = QLineEdit(); self.key_pass_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self.remote_command_edit = QLineEdit(ClientConfig.remote_command)
         self.session_id_edit = QLineEdit(uuid.uuid4().hex[:12])
         self.screen_edit = QLineEdit("1920x1080")
-        self.shared_folder_edit = QLineEdit(str(Path.home() / "RemoteShared"))
+        self.shared_folder_edit = QLineEdit("~/RemoteShared")
         self.known_hosts_edit = QLineEdit("")
+        self.fps_edit = QSpinBox(); self.fps_edit.setRange(1, 60); self.fps_edit.setValue(18)
+        self.quality_edit = QSpinBox(); self.quality_edit.setRange(20, 95); self.quality_edit.setValue(80)
+        self.idle_timeout_edit = QSpinBox(); self.idle_timeout_edit.setRange(5, 86400); self.idle_timeout_edit.setValue(300)
+        self.clipboard_max_edit = QSpinBox(); self.clipboard_max_edit.setRange(1024, 100_000_000); self.clipboard_max_edit.setValue(1_000_000)
         self.persistent_check = QCheckBox("Persistent session")
-        self.persistent_check.setChecked(True)
-        for label, widget in [("Host", self.host_edit), ("Port", self.port_edit), ("Username", self.user_edit), ("Password", self.password_edit), ("Private key", self.key_edit), ("Key passphrase", self.key_pass_edit), ("Remote command", self.remote_command_edit), ("Session id", self.session_id_edit), ("Screen", self.screen_edit), ("Shared folder", self.shared_folder_edit), ("Known hosts", self.known_hosts_edit)]:
+        self.clipboard_check = QCheckBox("Sync clipboard")
+        self.clipboard_check.setChecked(True)
+        self.reconnect_check = QCheckBox("Auto reconnect")
+        self.reconnect_check.setChecked(True)
+        for label, widget in [
+            ("Host", self.host_edit), ("Port", self.port_edit), ("Username", self.user_edit),
+            ("Password", self.password_edit), ("Private key", self.key_edit), ("Key passphrase", self.key_pass_edit),
+            ("Remote command", self.remote_command_edit), ("Session id", self.session_id_edit), ("Screen", self.screen_edit),
+            ("FPS", self.fps_edit), ("JPEG quality", self.quality_edit), ("Idle timeout", self.idle_timeout_edit),
+            ("Shared folder", self.shared_folder_edit), ("Known hosts", self.known_hosts_edit),
+            ("Clipboard max bytes", self.clipboard_max_edit),
+        ]:
             form.addRow(label, widget)
         form.addRow(self.persistent_check)
+        form.addRow(self.clipboard_check)
+        form.addRow(self.reconnect_check)
         session_layout.addWidget(box)
 
         self.display = RemoteDisplayWidget()
@@ -401,18 +654,28 @@ class MainWindow(QMainWindow):
 
         files_layout = QVBoxLayout(self.files_tab)
         row = QHBoxLayout()
-        self.remote_path_edit = QLineEdit(str(Path.home() / "RemoteShared"))
+        self.remote_path_edit = QLineEdit("")
         self.refresh_button = QPushButton("Refresh")
         self.refresh_button.clicked.connect(self.refresh_files)
+        self.up_button = QPushButton("Up")
+        self.up_button.clicked.connect(self.go_up)
+        self.mkdir_button = QPushButton("Mkdir")
+        self.mkdir_button.clicked.connect(self.mkdir_remote)
         self.upload_button = QPushButton("Upload…")
         self.upload_button.clicked.connect(self.upload_file_dialog)
         self.download_button = QPushButton("Download…")
         self.download_button.clicked.connect(self.download_file_dialog)
-        for widget in [QLabel("Remote path"), self.remote_path_edit, self.refresh_button, self.upload_button, self.download_button]:
+        self.cancel_transfer_button = QPushButton("Cancel transfer")
+        self.cancel_transfer_button.clicked.connect(self.cancel_transfers)
+        for widget in [QLabel("Shared relative path"), self.remote_path_edit, self.up_button, self.refresh_button, self.mkdir_button, self.upload_button, self.download_button, self.cancel_transfer_button]:
             row.addWidget(widget)
         files_layout.addLayout(row)
         self.file_list = QListWidget()
+        self.file_list.itemDoubleClicked.connect(self.open_file_item)
         files_layout.addWidget(self.file_list, 1)
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 100)
+        files_layout.addWidget(self.progress)
 
     def _load_defaults(self):
         from PySide6.QtCore import QSettings
@@ -424,6 +687,7 @@ class MainWindow(QMainWindow):
         self.remote_command_edit.setText(settings.value("remote_command", self.remote_command_edit.text()))
         self.shared_folder_edit.setText(settings.value("shared_folder", self.shared_folder_edit.text()))
         self.session_id_edit.setText(settings.value("session_id", self.session_id_edit.text()))
+        self.known_hosts_edit.setText(settings.value("known_hosts", ""))
 
     def _save_defaults(self):
         from PySide6.QtCore import QSettings
@@ -435,10 +699,20 @@ class MainWindow(QMainWindow):
         settings.setValue("remote_command", self.remote_command_edit.text())
         settings.setValue("shared_folder", self.shared_folder_edit.text())
         settings.setValue("session_id", self.session_id_edit.text())
+        settings.setValue("known_hosts", self.known_hosts_edit.text())
 
     def config(self) -> ClientConfig:
-        screen = tuple(int(part) for part in self.screen_edit.text().lower().split("x", 1))
-        return ClientConfig(host=self.host_edit.text().strip(), port=self.port_edit.value(), username=self.user_edit.text().strip(), password=self.password_edit.text(), key_file=self.key_edit.text().strip(), key_passphrase=self.key_pass_edit.text(), remote_command=self.remote_command_edit.text().strip(), session_id=self.session_id_edit.text().strip() or uuid.uuid4().hex[:12], screen=screen, persistent=self.persistent_check.isChecked(), shared_folder=self.shared_folder_edit.text().strip(), known_hosts=self.known_hosts_edit.text().strip())
+        screen = tuple(int(part) for part in self.screen_edit.text().lower().replace(" ", "").split("x", 1))
+        return ClientConfig(
+            host=self.host_edit.text().strip(), port=self.port_edit.value(), username=self.user_edit.text().strip(),
+            password=self.password_edit.text(), key_file=self.key_edit.text().strip(), key_passphrase=self.key_pass_edit.text(),
+            remote_command=self.remote_command_edit.text().strip(), session_id=self.session_id_edit.text().strip() or uuid.uuid4().hex[:12],
+            screen=(int(screen[0]), int(screen[1])), fps=self.fps_edit.value(), quality=self.quality_edit.value(),
+            persistent=self.persistent_check.isChecked(), idle_timeout=self.idle_timeout_edit.value(),
+            shared_folder=self.shared_folder_edit.text().strip(), known_hosts=self.known_hosts_edit.text().strip(),
+            clipboard_enabled=self.clipboard_check.isChecked(), clipboard_max_bytes=self.clipboard_max_edit.value(),
+            reconnect_enabled=self.reconnect_check.isChecked(),
+        )
 
     def connect_session(self):
         if self.transport and self.transport.isRunning():
@@ -451,14 +725,18 @@ class MainWindow(QMainWindow):
         self.transport.clipboardReceived.connect(self.handle_remote_clipboard)
         self.transport.statusChanged.connect(self.status.setText)
         self.transport.disconnected.connect(self.handle_disconnect)
+        self.transport.transferProgress.connect(self.handle_transfer_progress)
         self.transport.start()
         self.status.setText("Connecting…")
         self._save_defaults()
 
     def disconnect_session(self):
         if self.transport:
-            self.transport._running = False
+            self.transport.stop()
             self.status.setText("Disconnecting…")
+
+    def toggle_fullscreen(self):
+        self.showNormal() if self.isFullScreen() else self.showFullScreen()
 
     def handle_disconnect(self, message: str):
         self.status.setText(message)
@@ -469,7 +747,7 @@ class MainWindow(QMainWindow):
             self.display.setServerSize((int(screen[0]), int(screen[1])))
         folder = info.get("shared_folder")
         if folder:
-            self.remote_path_edit.setText(str(folder))
+            self._remote_root = str(folder)
         self.refresh_files()
 
     def send_input_message(self, message: dict):
@@ -485,45 +763,79 @@ class MainWindow(QMainWindow):
         self.send_input_message({"t": "key", "keysym": keysym, "down": False, "mods": mods})
 
     def local_clipboard_changed(self):
+        if not self.clipboard_check.isChecked():
+            return
         if self._clipboard_from_remote:
             self._clipboard_from_remote = False
             return
         text = self.clipboard.text()
         if text and text != self._last_remote_clipboard and self.transport:
-            self.transport.submit_frame(FRAME_CLIPBOARD, {"t": "clipboard", "format": "text", "data": text, "origin": "client"})
+            if len(text.encode("utf-8")) <= self.clipboard_max_edit.value():
+                self.transport.submit_frame(FRAME_CLIPBOARD, {"t": "clipboard", "format": "text", "data": text, "origin": "client"})
 
     def handle_remote_clipboard(self, text: str):
-        if text and text != self.clipboard.text():
+        if self.clipboard_check.isChecked() and text and text != self.clipboard.text():
             self._clipboard_from_remote = True
             self._last_remote_clipboard = text
             self.clipboard.setText(text)
 
     def open_keygen(self):
         self.key_dialog = KeyGenDialog()
-        self.key_dialog.setWindowModality(Qt.ApplicationModal)
+        self.key_dialog.setWindowModality(Qt.WindowModality.ApplicationModal)
         self.key_dialog.show()
 
-    def _run_file_task(self, coro, on_success):
+    def _run_file_task(self, coro_factory: Callable[[], Any], on_success: Callable[[Any], None] | None = None):
         if not self.transport:
             return
-        task = AsyncTask(self.transport, coro)
-        task.success.connect(on_success)
+        task = AsyncTask(self.transport, coro_factory)
+        if on_success:
+            task.success.connect(on_success)
         task.failure.connect(lambda e: QMessageBox.critical(self, "File transfer", e))
         self._tasks.append(task)
         task.start()
 
+    def current_rel(self) -> str:
+        return normalize_remote_rel(self.remote_path_edit.text())
+
     def refresh_files(self):
         if self.transport:
-            self._run_file_task(self.transport.listdir(self.remote_path_edit.text().strip() or "."), self._display_remote_files)
+            self._remote_rel = self.current_rel()
+            self._run_file_task(lambda: self.transport.listdir(self._remote_rel), self._display_remote_files)
 
     def _display_remote_files(self, entries):
         self.file_list.clear()
-        for entry in entries:
+        for entry in sorted(entries, key=lambda e: getattr(e, "filename", "")):
             name = getattr(entry, "filename", None) or getattr(entry, "longname", "")
-            size = getattr(entry, "st_size", 0)
-            item = QListWidgetItem(f"{name}  ({size} bytes)")
-            item.setData(Qt.UserRole, name)
+            size = getattr(entry, "size", getattr(entry, "st_size", 0))
+            perms = getattr(entry, "permissions", 0)
+            is_dir = bool(perms & 0o040000)
+            item = QListWidgetItem(f"{'📁' if is_dir else '📄'} {name}  ({size} bytes)")
+            item.setData(qt_user_role(), {"name": name, "is_dir": is_dir})
             self.file_list.addItem(item)
+
+    def open_file_item(self, item: QListWidgetItem):
+        data = item.data(qt_user_role())
+        if isinstance(data, dict) and data.get("is_dir"):
+            self.remote_path_edit.setText(normalize_remote_rel(f"{self.current_rel()}/{data['name']}"))
+            self.refresh_files()
+
+    def go_up(self):
+        rel = Path(self.current_rel()).parent.as_posix()
+        self.remote_path_edit.setText("" if rel == "." else rel)
+        self.refresh_files()
+
+    def mkdir_remote(self):
+        name, ok = QInputDialog.getText(self, "Create remote folder", "Folder name")
+        if not ok or not name.strip():
+            return
+        folder = Path(name.strip()).name
+        target = normalize_remote_rel(f"{self.current_rel()}/{folder}")
+        self._run_file_task(lambda: self.transport.mkdir(target), lambda _: self.refresh_files())
+
+    def cancel_transfers(self):
+        if self.transport:
+            self.transport.cancel_transfers()
+            self.status.setText("transfer cancellation requested")
 
     def upload_file_dialog(self):
         local_path, _ = QFileDialog.getOpenFileName(self, "Upload file")
@@ -533,25 +845,46 @@ class MainWindow(QMainWindow):
     def upload_local_files(self, paths: list[str]):
         if not self.transport:
             return
-        remote_dir = self.remote_path_edit.text().strip() or "."
         for path in paths:
-            remote_path = f"{remote_dir.rstrip('/')}/{Path(path).name}"
-            self._run_file_task(self.transport.put(path, remote_path), lambda _: self.refresh_files())
+            rel = normalize_remote_rel(f"{self.current_rel()}/{Path(path).name}")
+            transfer_id = uuid.uuid4().hex[:8]
+            self._run_file_task(lambda p=path, r=rel, tid=transfer_id: self.transport.put_file(p, r, tid), lambda _: self.refresh_files())
 
     def download_file_dialog(self):
         item = self.file_list.currentItem()
         if not item or not self.transport:
             return
-        remote_name = item.data(Qt.UserRole)
-        remote_dir = self.remote_path_edit.text().strip() or "."
-        remote_path = f"{remote_dir.rstrip('/')}/{remote_name}"
-        local_path, _ = QFileDialog.getSaveFileName(self, "Download file", remote_name)
+        data = item.data(qt_user_role())
+        if not isinstance(data, dict) or data.get("is_dir"):
+            return
+        remote_rel = normalize_remote_rel(f"{self.current_rel()}/{data['name']}")
+        local_path, _ = QFileDialog.getSaveFileName(self, "Download file", data["name"])
         if local_path:
-            self._run_file_task(self.transport.get(remote_path, local_path), lambda _: None)
+            transfer_id = uuid.uuid4().hex[:8]
+            self._run_file_task(lambda: self.transport.get_file(remote_rel, local_path, transfer_id), lambda _: None)
+
+    def handle_transfer_progress(self, transfer_id: str, done: int, total: int):
+        pct = int((done / total) * 100) if total else 0
+        self.progress.setValue(max(0, min(100, pct)))
+        self.status.setText(f"transfer {transfer_id}: {done}/{total}")
+
+
+def configure_qt_platform() -> None:
+    if platform.system() != "Linux" or os.environ.get("QT_QPA_PLATFORM"):
+        return
+    if os.environ.get("WAYLAND_DISPLAY"):
+        os.environ["QT_QPA_PLATFORM"] = "wayland;xcb"
+    else:
+        os.environ["QT_QPA_PLATFORM"] = "xcb"
 
 
 def main() -> None:
-    app = QApplication([])
+    import sys
+    if any(arg in {"-h", "--help"} for arg in sys.argv[1:]):
+        print("Remote SSH Desktop client\n\nRun without arguments to start the Qt GUI. Configure the SSH host, user, key/password, shared folder, clipboard, and quality options inside the window.")
+        return
+    configure_qt_platform()
+    app = QApplication(sys.argv)
     window = MainWindow()
     window.resize(1400, 1000)
     window.show()

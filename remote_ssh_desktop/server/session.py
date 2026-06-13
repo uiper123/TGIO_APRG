@@ -11,20 +11,45 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from ..common.protocol import FRAME_CLIPBOARD, FRAME_CONTROL, FRAME_INPUT, FRAME_STATS, FRAME_VIDEO, decode_message, pack_frame, read_frame
-from .x11 import ClipboardBridge, XInputController, available_desktop_command, capture_frame, ensure_xauthority, find_free_display, launch_desktop, launch_xvfb, make_session_env
+from remote_ssh_desktop.common.protocol import (
+    FRAME_CLIPBOARD,
+    FRAME_CONTROL,
+    FRAME_INPUT,
+    FRAME_STATS,
+    FRAME_VIDEO,
+    PROTOCOL_VERSION,
+    SUPPORTED_CODECS,
+    control_error,
+    decode_message,
+    pack_frame,
+    read_frame,
+)
+from remote_ssh_desktop.server.x11 import (
+    ClipboardBridge,
+    XInputController,
+    available_desktop_command,
+    capture_frame,
+    ensure_xauthority,
+    find_free_display,
+    launch_desktop,
+    launch_xvfb,
+    make_session_env,
+    wait_for_x,
+)
 
 
 @dataclass(slots=True)
 class SessionConfig:
     session_id: str
     screen_size: tuple[int, int] = (1920, 1080)
-    fps: int = 12
+    fps: int = 18
     quality: int = 80
-    persistent: bool = True
+    persistent: bool = False
     idle_timeout: int = 300
     desktop_command: str | None = None
     shared_folder: str | None = None
+    clipboard_enabled: bool = True
+    clipboard_max_bytes: int = 1_000_000
 
 
 @dataclass(slots=True)
@@ -45,8 +70,10 @@ class SessionState:
     last_remote_clipboard: str = ""
     last_frame_digest: bytes = b""
     quality: int = 80
-    fps: int = 12
+    fps: int = 18
+    frames_sent: int = 0
     running: bool = True
+    client_ready: bool = False
 
 
 class SessionWorker:
@@ -62,7 +89,17 @@ class SessionWorker:
     def _init_state(self, config: SessionConfig) -> SessionState:
         session_dir = Path.home() / ".cache" / "remote-ssh-desktop" / config.session_id
         session_dir.mkdir(parents=True, exist_ok=True)
-        return SessionState(session_dir=session_dir, socket_path=session_dir / "proxy.sock", state_path=session_dir / "session.json", quality=config.quality, fps=config.fps)
+        return SessionState(
+            session_dir=session_dir,
+            socket_path=session_dir / "proxy.sock",
+            state_path=session_dir / "session.json",
+            quality=config.quality,
+            fps=config.fps,
+        )
+
+    @property
+    def shared_folder(self) -> Path:
+        return Path(self.config.shared_folder or (Path.home() / "RemoteShared")).expanduser().resolve()
 
     def _touch_proxy(self) -> None:
         self.state.last_proxy_seen = time.monotonic()
@@ -73,10 +110,14 @@ class SessionWorker:
             "socket_path": str(self.state.socket_path),
             "display": self.state.display,
             "xauthority": str(self.state.xauthority) if self.state.xauthority else "",
-            "screen_size": list(self.config.screen_size),
-            "shared_folder": self.config.shared_folder or str(Path.home() / "RemoteShared"),
+            "screen": list(self.config.screen_size),
+            "shared_folder": str(self.shared_folder),
             "persistent": self.config.persistent,
+            "clipboard_enabled": self.config.clipboard_enabled,
             "updated_at": time.time(),
+            "pid": os.getpid(),
+            "user": os.environ.get("USER", ""),
+            "home": str(Path.home()),
         }
         self.state.state_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -84,24 +125,29 @@ class SessionWorker:
         display_num = find_free_display()
         self.state.display = f":{display_num}"
         self.state.xauthority = ensure_xauthority(self.state.session_dir, self.state.display)
-        self.state.env = make_session_env(self.state.display, self.state.xauthority)
-        self.state.xvfb = launch_xvfb(self.state.display, self.config.screen_size, self.state.xauthority)
-        self.state.desktop = launch_desktop(self.state.env, available_desktop_command(self.config.desktop_command))
+        self.state.env = make_session_env(self.state.display, self.state.xauthority, Path.home(), os.environ.get("USER"))
         os.environ["DISPLAY"] = self.state.display
         os.environ["XAUTHORITY"] = str(self.state.xauthority)
+        self.state.xvfb = launch_xvfb(self.state.display, self.config.screen_size, self.state.xauthority)
+        wait_for_x(self.state.display)
+        self.shared_folder.mkdir(parents=True, exist_ok=True)
+        self.state.desktop = launch_desktop(self.state.env, available_desktop_command(self.config.desktop_command))
         self.state.xinput = XInputController(self.state.display)
-        self.state.clipboard = ClipboardBridge(self.state.env)
-        Path(self.config.shared_folder or (Path.home() / "RemoteShared")).mkdir(parents=True, exist_ok=True)
+        if self.config.clipboard_enabled:
+            self.state.clipboard = ClipboardBridge(self.state.env, max_bytes=self.config.clipboard_max_bytes)
         self._write_state()
 
     async def run(self) -> None:
         await self._bootstrap()
         with contextlib.suppress(FileNotFoundError):
-            if self.state.socket_path.exists():
-                self.state.socket_path.unlink()
+            self.state.socket_path.unlink()
         self._server = await asyncio.start_unix_server(self._accept_proxy, path=str(self.state.socket_path))
         self._write_state()
-        self._tasks = [asyncio.create_task(self._capture_loop()), asyncio.create_task(self._clipboard_loop()), asyncio.create_task(self._watchdog())]
+        self._tasks = [
+            asyncio.create_task(self._capture_loop(), name="capture"),
+            asyncio.create_task(self._clipboard_loop(), name="clipboard"),
+            asyncio.create_task(self._watchdog(), name="watchdog"),
+        ]
         async with self._server:
             await self._needs_stop.wait()
         await self.shutdown()
@@ -111,8 +157,9 @@ class SessionWorker:
             with contextlib.suppress(Exception):
                 self.state.current_writer.close()
         self.state.current_writer = writer
+        self.state.client_ready = False
         self._touch_proxy()
-        await self._send_control({"t": "session", "session_id": self.config.session_id, "display": self.state.display, "screen": list(self.config.screen_size), "fps": self.state.fps, "quality": self.state.quality, "shared_folder": self.config.shared_folder or str(Path.home() / "RemoteShared"), "persistent": self.config.persistent})
+        await self._send_session()
         if self.state.clipboard:
             text = self.state.clipboard.read_text()
             if text:
@@ -128,18 +175,32 @@ class SessionWorker:
         finally:
             if self.state.current_writer is writer:
                 self.state.current_writer = None
+                self.state.client_ready = False
             with contextlib.suppress(Exception):
                 writer.close()
                 await writer.wait_closed()
 
+    async def _send_session(self) -> None:
+        await self._send_control(
+            {
+                "t": "session",
+                "session_id": self.config.session_id,
+                "display": self.state.display,
+                "screen": list(self.config.screen_size),
+                "fps": self.state.fps,
+                "quality": self.state.quality,
+                "codec": "jpeg",
+                "cursor": "embedded",
+                "shared_folder": str(self.shared_folder),
+                "persistent": self.config.persistent,
+                "clipboard_enabled": self.config.clipboard_enabled,
+            }
+        )
+
     async def _dispatch(self, kind: int, payload: bytes) -> None:
         message = decode_message(payload) if payload else {}
         if kind == FRAME_CONTROL:
-            typ = message.get("t")
-            if typ == "hello":
-                await self._send_control({"t": "hello", "ok": True, "session_id": self.config.session_id})
-            elif typ == "ping":
-                await self._send_control({"t": "pong", "ts": message.get("ts", time.time())})
+            await self._handle_control(message)
         elif kind == FRAME_INPUT:
             await self._handle_input(message)
         elif kind == FRAME_CLIPBOARD:
@@ -147,14 +208,37 @@ class SessionWorker:
         elif kind == FRAME_STATS:
             self._apply_stats(message)
 
+    async def _handle_control(self, message: dict[str, Any]) -> None:
+        typ = message.get("t")
+        if typ == "hello":
+            proto = int(message.get("proto", 0) or 0)
+            codec = str(message.get("codec", "jpeg"))
+            if proto != PROTOCOL_VERSION:
+                await self._send_control(control_error("bad_proto", f"expected protocol {PROTOCOL_VERSION}"))
+                return
+            if codec not in SUPPORTED_CODECS:
+                await self._send_control(control_error("bad_codec", f"supported codecs: {sorted(SUPPORTED_CODECS)}"))
+                return
+            self.state.client_ready = True
+            await self._send_control({"t": "hello", "ok": True, "proto": PROTOCOL_VERSION, "session_id": self.config.session_id})
+            await self._send_session()
+        elif typ == "ping":
+            await self._send_control({"t": "pong", "ts": message.get("ts", time.time()), "server_ts": time.time()})
+        elif typ == "stats":
+            self._apply_stats(message)
+        elif typ == "set_quality":
+            self.state.quality = max(20, min(95, int(message.get("quality", self.state.quality))))
+            self.state.fps = max(1, min(60, int(message.get("fps", self.state.fps))))
+
     def _apply_stats(self, message: dict[str, Any]) -> None:
         lag = float(message.get("latency_ms", 0.0) or 0.0)
-        if lag > 150:
-            self.state.quality = max(45, self.state.quality - 5)
-            self.state.fps = max(5, self.state.fps - 1)
-        elif lag < 60:
+        dropped = int(message.get("dropped", 0) or 0)
+        if lag > 180 or dropped > 3:
+            self.state.quality = max(35, self.state.quality - 5)
+            self.state.fps = max(5, self.state.fps - 2)
+        elif lag < 70 and dropped == 0:
             self.state.quality = min(90, self.state.quality + 1)
-            self.state.fps = min(max(self.state.fps, 8), 30)
+            self.state.fps = min(30, self.state.fps + 1)
 
     async def _handle_input(self, message: dict[str, Any]) -> None:
         xinput = self.state.xinput
@@ -171,9 +255,11 @@ class SessionWorker:
             xinput.key(str(message.get("keysym", "")), bool(message.get("down", True)), message.get("mods", []))
 
     async def _handle_clipboard(self, message: dict[str, Any]) -> None:
-        if message.get("format") != "text":
+        if not self.config.clipboard_enabled or message.get("format") != "text":
             return
         text = str(message.get("data", ""))
+        if len(text.encode("utf-8")) > self.config.clipboard_max_bytes:
+            return
         origin = str(message.get("origin", ""))
         if origin == "client" and text != self.state.last_remote_clipboard:
             self.state.last_remote_clipboard = text
@@ -206,6 +292,9 @@ class SessionWorker:
         last_sent = 0.0
         while self.state.running:
             start = time.monotonic()
+            if not self.state.client_ready:
+                await asyncio.sleep(0.05)
+                continue
             try:
                 jpeg, _ = capture_frame(self.state.display, quality=self.state.quality)
             except Exception:
@@ -216,12 +305,16 @@ class SessionWorker:
             if send:
                 self.state.last_frame_digest = digest
                 last_sent = time.monotonic()
+                self.state.frames_sent += 1
                 await self._send_frame(FRAME_VIDEO, jpeg)
             delay = max(1.0 / max(self.state.fps, 1) - (time.monotonic() - start), 0.0)
             await asyncio.sleep(delay)
 
     async def _clipboard_loop(self) -> None:
         while self.state.running:
+            if not self.config.clipboard_enabled:
+                await asyncio.sleep(1.0)
+                continue
             try:
                 if self.state.clipboard:
                     text = self.state.clipboard.read_text()
@@ -248,6 +341,8 @@ class SessionWorker:
         self.state.running = False
         for task in self._tasks:
             task.cancel()
+        if self.state.xinput:
+            self.state.xinput.close()
         for proc in (self.state.desktop, self.state.xvfb):
             if proc and proc.poll() is None:
                 with contextlib.suppress(Exception):

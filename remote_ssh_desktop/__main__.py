@@ -1,4 +1,4 @@
-from .server.main import main
+from remote_ssh_desktop.server.main import main
 
 if __name__ == "__main__":
     main()
