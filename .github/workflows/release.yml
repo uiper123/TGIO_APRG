@@ -26,22 +26,26 @@ jobs:
             name: client-linux
             kind: client
             artifact: remote-ssh-desktop-client-linux-x86_64
-            build: pyinstaller --noconfirm --clean build_client_linux.spec
+            script: scripts/build_client_linux.sh
+            binary: dist/remote-ssh-desktop
           - os: ubuntu-22.04
             name: server-linux
             kind: server
             artifact: remote-ssh-desktop-server-linux-x86_64
-            build: pyinstaller --noconfirm --clean build_server_linux.spec
+            script: scripts/build_server_linux.sh
+            binary: dist/remote-ssh-desktop-server
           - os: windows-2022
             name: client-windows
             kind: client
             artifact: remote-ssh-desktop-client-windows-x86_64
-            build: pyinstaller --noconfirm --clean build_client_windows.spec
+            script: scripts/build_client_windows.ps1
+            binary: dist/remote-ssh-desktop.exe
           - os: macos-13
             name: client-macos
             kind: client
             artifact: remote-ssh-desktop-client-macos-arm64
-            build: pyinstaller --noconfirm --clean build_client_macos.spec
+            script: scripts/build_client_macos.sh
+            binary: dist/remote-ssh-desktop
 
     steps:
       - name: checkout
@@ -72,6 +76,13 @@ jobs:
           brew update
           brew install xquartz 2>/dev/null || true
 
+      - name: install windows deps
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # No system deps required; PySide6 wheels bundle needed Qt runtime.
+          Write-Host "windows deps ready"
+
       - name: cache pip
         uses: actions/cache@v4
         with:
@@ -91,57 +102,43 @@ jobs:
           python -m remote_ssh_desktop.crypto.keygen --help
 
       - name: build binary
-        env:
-          RSD_KIND: ${{ matrix.kind }}
-          RSD_NAME: ${{ matrix.name }}
-        run: |
-          if [ "$RUNNER_OS" == "Windows" ]; then
-            $env:RSD_KIND = "${{ matrix.kind }}"
-            $env:RSD_NAME = "${{ matrix.name }}"
-            ${{ matrix.build }}
-          else
-            RSD_KIND=${{ matrix.kind }} RSD_NAME=${{ matrix.name }} ${{ matrix.build }}
-          fi
+        shell: bash
+        run: chmod +x scripts/*.sh && PROJECT_ROOT="$GITHUB_WORKSPACE" RSD_KIND=${{ matrix.kind }} RSD_NAME=${{ matrix.name }} bash ${{ matrix.script }}
 
-      - name: package linux server
-        if: matrix.name == 'server-linux'
+      - name: layout artifact dir
+        shell: bash
         run: |
           mkdir -p dist/${{ matrix.artifact }}
-          cp dist/remote-ssh-desktop-server dist/${{ matrix.artifact }}/remote-ssh-desktop-server || true
-          chmod +x dist/${{ matrix.artifact }}/*
-          (cd dist && tar -czf "${{ matrix.artifact }}.tar.gz" "${{ matrix.artifact }}")
-          (cd dist && zip -r "${{ matrix.artifact }}.zip" "${{ matrix.artifact }}" >/dev/null)
-
-      - name: package linux/macos client
-        if: matrix.name == 'client-linux' || matrix.name == 'client-macos'
-        run: |
-          mkdir -p dist/${{ matrix.artifact }}
-          if [ -d dist/remote-ssh-desktop-client.app ]; then
-            cp -R dist/remote-ssh-desktop-client.app dist/${{ matrix.artifact }}/
+          if [ -d dist/remote-ssh-desktop.app ]; then
+            cp -R dist/remote-ssh-desktop.app dist/${{ matrix.artifact }}/
+          elif [ -d dist/remote-ssh-desktop.app ]; then
+            cp -R dist/remote-ssh-desktop.app dist/${{ matrix.artifact }}/
+          elif [ -f dist/remote-ssh-desktop.exe ]; then
+            cp dist/remote-ssh-desktop.exe dist/${{ matrix.artifact }}/
           else
-            cp dist/remote-ssh-desktop-client dist/${{ matrix.artifact }}/
+            cp dist/remote-ssh-desktop dist/${{ matrix.artifact }}/ || true
+            cp dist/remote-ssh-desktop-server dist/${{ matrix.artifact }}/ || true
           fi
-          (cd dist && tar -czf "${{ matrix.artifact }}.tar.gz" "${{ matrix.artifact }}")
-          (cd dist && zip -r "${{ matrix.artifact }}.zip" "${{ matrix.artifact }}" >/dev/null)
 
-      - name: package windows client
-        if: matrix.name == 'client-windows'
-        shell: pwsh
+      - name: package archives
+        shell: bash
         run: |
-          Compress-Archive -Path dist\remote-ssh-desktop-client -DestinationPath dist\${{ matrix.artifact }}.zip -Force
-          Copy-Item dist\remote-ssh-desktop-client\* ${{ matrix.artifact }}\ -Recurse -Force
+          cd dist
+          if [ -d "${{ matrix.artifact }}" ]; then
+            tar -czf "${{ matrix.artifact }}.tar.gz" "${{ matrix.artifact }}"
+            zip -r "${{ matrix.artifact }}.zip" "${{ matrix.artifact }}" >/dev/null
+          fi
+          ls -la
 
       - name: compute sha256
         shell: bash
         run: |
           cd dist
+          : > SHA256SUMS.txt
           for f in *.tar.gz *.zip; do
             [ -e "$f" ] || continue
             sha256sum "$f" >> SHA256SUMS.txt
           done
-          if [ "$RUNNER_OS" == "Windows" ]; then
-            powershell -Command "Get-ChildItem dist\*.zip | ForEach-Object { (Get-FileHash \$_.FullName -Algorithm SHA256).Hash.ToLower() + '  ' + \$_.Name } | Tee-Object -FilePath dist\SHA256SUMS.txt -Append"
-          fi
           cat SHA256SUMS.txt
 
       - name: upload artifacts
@@ -164,36 +161,43 @@ jobs:
         with:
           path: artifacts
 
-      - name: compute sha256 sums
+      - name: compute combined sha256 sums
         run: |
           cd artifacts
-          for f in $(find . -type f \( -name '*.tar.gz' -o -name '*.zip' \)); do
-            sha256sum "$f" >> SHA256SUMS.txt
-          done
+          : > SHA256SUMS.txt
+          find . -type f \( -name '*.tar.gz' -o -name '*.zip' \) -print0 | xargs -0 sha256sum >> SHA256SUMS.txt
           sort -o SHA256SUMS.txt SHA256SUMS.txt
           cat SHA256SUMS.txt
 
       - name: generate changelog
         id: changelog
-        run: |
-          python - <<'PY'
-          import os, subprocess, json, sys
-          tag = os.environ["GITHUB_REF_NAME"]
-          prev = subprocess.check_output(["git", "describe", "--tags", "--abbrev=0", f"{tag}^"], text=True).strip() if subprocess.call(["git", "rev-parse", f"{tag}^"], stderr=subprocess.DEVNULL) == 0 else ""
-          os.chdir(os.environ.get("GITHUB_WORKSPACE", "."))
-          if prev:
-              text = subprocess.check_output(["git", "log", f"{prev}..{tag}", "--pretty=%s"], text=True)
-          else:
-              text = subprocess.check_output(["git", "log", tag, "--pretty=%s", "-n", "50"], text=True)
-          bullets = "\n".join(f"- {line}" for line in text.strip().splitlines() if line.strip())
-          body = f"## Changes\n\n{bullets}\n\n## Artifacts\n\n| Platform | File |\n|---|---|\n| Linux client (x86_64) | `remote-ssh-desktop-client-linux-x86_64.tar.gz` |\n| Linux server (x86_64) | `remote-ssh-desktop-server-linux-x86_64.tar.gz` |\n| Windows client (x86_64) | `remote-ssh-desktop-client-windows-x86_64.zip` |\n| macOS client (arm64) | `remote-ssh-desktop-client-macos-arm64.tar.gz` |\n\nSHA-256 checksums are in `SHA256SUMS.txt`."
-          with open(os.environ["GITHUB_OUTPUT"], "w") as fh:
-              print(f"body<<EOF\n{body}\nEOF", file=fh)
-          PY
-
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REF_NAME: ${{ github.ref_name }}
+        run: |
+          python - <<'PY'
+          import os, subprocess
+          tag = os.environ["GITHUB_REF_NAME"]
+          os.chdir(os.environ.get("GITHUB_WORKSPACE", "."))
+          try:
+              prev = subprocess.check_output(["git", "describe", "--tags", "--abbrev=0", f"{tag}^"], text=True).strip()
+              text = subprocess.check_output(["git", "log", f"{prev}..{tag}", "--pretty=%s"], text=True)
+          except Exception:
+              text = subprocess.check_output(["git", "log", tag, "--pretty=%s", "-n", "50"], text=True)
+          bullets = "\n".join(f"- {line}" for line in text.strip().splitlines() if line.strip())
+          body = (
+              f"## Changes\n\n{bullets}\n\n"
+              "## Artifacts\n\n"
+              "| Platform | File |\n|---|---|\n"
+              "| Linux client (x86_64) | `remote-ssh-desktop-client-linux-x86_64.tar.gz` |\n"
+              "| Linux server (x86_64) | `remote-ssh-desktop-server-linux-x86_64.tar.gz` |\n"
+              "| Windows client (x86_64) | `remote-ssh-desktop-client-windows-x86_64.zip` |\n"
+              "| macOS client (arm64) | `remote-ssh-desktop-client-macos-arm64.tar.gz` |\n\n"
+              "SHA-256 checksums are in `SHA256SUMS.txt`."
+          )
+          with open(os.environ["GITHUB_OUTPUT"], "w") as fh:
+              print(f"body<<EOF\n{body}\nEOF", file=fh)
+          PY
 
       - name: create release
         uses: softprops/action-gh-release@v2

@@ -1,8 +1,51 @@
-block_cipher = None
+#!/usr/bin/env python
+# -*- mode: python ; coding: utf-8 -*-
 
-a = Analysis([
-    "remote_ssh_desktop/server/main.py",
-], pathex=["."], binaries=[], datas=[], hiddenimports=[], hookspath=[], runtime_hooks=[], excludes=[], noarchive=False)
+import os
+import sys
+from pathlib import Path
+from PyInstaller.utils.hooks import collect_submodules
+
+block_cipher = None
+PROJECT_ROOT = Path(os.environ.get("PROJECT_ROOT", ".")).resolve()
+
+hidden = collect_submodules("remote_ssh_desktop")
+hidden += ["mss", "Xlib", "Xlib.ext", "cryptography", "cryptography.hazmat.primitives.asymmetric"]
+
+a = Analysis(
+    ["remote_ssh_desktop/server/main.py"],
+    pathex=[str(PROJECT_ROOT)],
+    binaries=[],
+    datas=[],
+    hiddenimports=hidden,
+    hookspath=[],
+    hooksconfig={},
+    runtime_hooks=[],
+    excludes=["tkinter", "PySide6"],
+    win_no_prefer_redirects=False,
+    win_private_assemblies=False,
+    cipher=block_cipher,
+    noarchive=False,
+)
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
-exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name="remote-ssh-desktop-server", console=False)
-coll = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name="remote-ssh-desktop-server")
+exe = EXE(
+    pyz,
+    a.scripts,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
+    [],
+    name="remote-ssh-desktop-server",
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip=False,
+    upx=False,
+    upx_exclude=[],
+    runtime_tmpdir=None,
+    console=True,
+    disable_windowed_traceback=False,
+    target_arch=None,
+    codesign_identity=None,
+    entitlements_file=None,
+    icon=None,
+)
