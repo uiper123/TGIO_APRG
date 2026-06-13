@@ -118,27 +118,48 @@ jobs:
       - name: layout artifact dir
         shell: bash
         run: |
-          mkdir -p dist/${{ matrix.artifact }}
-          if [ -d dist/remote-ssh-desktop.app ]; then
-            cp -R dist/remote-ssh-desktop.app dist/${{ matrix.artifact }}/
-          elif [ -d dist/remote-ssh-desktop.app ]; then
-            cp -R dist/remote-ssh-desktop.app dist/${{ matrix.artifact }}/
-          elif [ -f dist/remote-ssh-desktop.exe ]; then
-            cp dist/remote-ssh-desktop.exe dist/${{ matrix.artifact }}/
-          else
-            cp dist/remote-ssh-desktop dist/${{ matrix.artifact }}/ || true
-            cp dist/remote-ssh-desktop-server dist/${{ matrix.artifact }}/ || true
+          set -e
+          artifact="${{ matrix.artifact }}"
+          mkdir -p "dist/$artifact"
+          candidate=""
+          for d in dist/remote-ssh-desktop dist/remote-ssh-desktop-server dist/client-linux dist/server-linux dist/client-windows dist/client-macos; do
+            if [ -d "$d" ]; then
+              candidate="$d"
+              break
+            fi
+          done
+          if [ -z "$candidate" ]; then
+            echo "no PyInstaller output dir found" >&2
+            ls -la dist
+            exit 1
           fi
+          echo "Using PyInstaller output: $candidate"
+          cp -R "$candidate"/. "dist/$artifact"/
+          ls -la "dist/$artifact"
 
       - name: package archives
+        if: runner.os != 'Windows'
         shell: bash
         run: |
           cd dist
           if [ -d "${{ matrix.artifact }}" ]; then
             tar -czf "${{ matrix.artifact }}.tar.gz" "${{ matrix.artifact }}"
-            zip -r "${{ matrix.artifact }}.zip" "${{ matrix.artifact }}" >/dev/null
+            if command -v zip >/dev/null 2>&1; then
+              zip -r "${{ matrix.artifact }}.zip" "${{ matrix.artifact }}" >/dev/null
+            fi
           fi
           ls -la
+
+      - name: package archives (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $artifact = "${{ matrix.artifact }}"
+          Set-Location dist
+          if (Test-Path $artifact) {
+            Compress-Archive -Path $artifact -DestinationPath "$artifact.zip" -Force
+          }
+          Get-ChildItem
 
       - name: compute sha256
         shell: bash
