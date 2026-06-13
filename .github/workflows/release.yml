@@ -101,7 +101,17 @@ jobs:
           python -c "import remote_ssh_desktop.client.main, remote_ssh_desktop.server.main, remote_ssh_desktop.crypto.keygen"
           python -m remote_ssh_desktop.crypto.keygen --help
 
-      - name: build binary
+      - name: build binary (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          RSD_KIND: ${{ matrix.kind }}
+          RSD_NAME: ${{ matrix.name }}
+          PROJECT_ROOT: ${{ github.workspace }}
+        run: ./scripts/build_client_windows.ps1
+
+      - name: build binary (unix)
+        if: runner.os != 'Windows'
         shell: bash
         run: chmod +x scripts/*.sh && PROJECT_ROOT="$GITHUB_WORKSPACE" RSD_KIND=${{ matrix.kind }} RSD_NAME=${{ matrix.name }} bash ${{ matrix.script }}
 

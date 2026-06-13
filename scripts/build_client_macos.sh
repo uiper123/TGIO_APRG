@@ -1,23 +1,33 @@
 #!/usr/bin/env bash
+# Builds the macOS client binary using PyInstaller.
+
 set -euo pipefail
+KIND="${RSD_KIND:-client}"
+NAME="${RSD_NAME:-remote-ssh-desktop.app}"
+PROJECT_ROOT="${PROJECT_ROOT:-$PWD}"
+DIST="$PROJECT_ROOT/dist"
+BUILD="$PROJECT_ROOT/build"
 
-DIST=dist
-NAME=remote-ssh-desktop
-ENTRY=remote_ssh_desktop.client.main
+rm -rf "$DIST" "$BUILD"
+mkdir -p "$DIST"
 
-python3 -m pip install --quiet --upgrade pip
-python3 -m pip install --quiet -r requirements.txt
-python3 -m pip install --quiet pyinstaller
+ENTRY="remote_ssh_desktop/client/main.py"
+ARGS=(
+  --noconfirm --clean
+  --name "$NAME"
+  --osx-bundle-identifier org.remote-ssh-desktop.client
+  --distpath "$DIST"
+  --workpath "$BUILD"
+  --specpath "$PROJECT_ROOT"
+  --windowed
+  --collect-submodules PySide6
+  --collect-submodules asyncssh
+  --collect-submodules PIL
+  --collect-submodules mss
+  --collect-submodules remote_ssh_desktop
+  --hidden-import PIL.ImageQt
+  "$ENTRY"
+)
 
-pyinstaller \
-    --noconfirm \
-    --clean \
-    --name "$NAME" \
-    --windowed \
-    --onefile \
-    --collect-submodules PySide6 \
-    --paths . \
-    --distpath "$DIST" \
-    --workpath build/pyi \
-    --specpath build/spec \
-    "$ENTRY"
+pyinstaller "${ARGS[@]}"
+echo "build complete: $DIST"
