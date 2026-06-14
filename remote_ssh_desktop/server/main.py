@@ -301,7 +301,9 @@ def main() -> None:
         return
     if args.stop_session:
         raise SystemExit(0 if stop_session(args.stop_session) else 1)
-    _check_server_deps_or_exit()
+    # Backend dependency check is handled by backend.check_dependencies()
+    # inside SessionWorker._bootstrap() — no separate pre-check needed here.
+    # (The old _check_server_deps_or_exit() was Linux/X11 specific.)
     session_id = args.session_id or os.environ.get("REMOTE_SSH_DESKTOP_SESSION") or os.urandom(6).hex()
     if args.worker:
         worker = SessionWorker(

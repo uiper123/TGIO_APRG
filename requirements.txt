@@ -5,3 +5,7 @@ python-xlib>=0.33
 mss>=9.0.1
 Pillow>=10.0.0
 numpy>=1.26.0
+
+# Optional platform-specific server dependencies:
+#   macOS server:   pip install pynput
+#   Windows server: no additional deps (uses ctypes built-in)

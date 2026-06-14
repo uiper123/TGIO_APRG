@@ -326,3 +326,36 @@
 - Prompt 4: TOFU host key verification, explicit insecure checkbox — commit 8cf742c2
 - Prompt 5: Real drop-frame detection via sequence numbers — commit debbdf54
 - Prompt 6: Spec files as build source of truth, README+scripts synced — this commit
+
+## Cycle 17 completed — 2026-06-14
+
+### Done
+- Created `remote_ssh_desktop/server/backends/` package:
+  - `base.py`: SessionBackend ABC with check_dependencies(), startup(),
+    capture_frame(), inject_mouse_move/button/scroll/key(), get/set_clipboard(),
+    shutdown(), display_info, platform_name.
+  - `x11.py`: X11Backend — wraps existing x11.py helpers (Xvfb, XTEST, xclip).
+  - `windows.py`: WindowsBackend — mss capture + ctypes Win32 SendInput +
+    Win32 clipboard API. No Xvfb needed. Captures the current Windows desktop.
+  - `macos.py`: MacOSBackend — mss capture + pynput input + pbcopy/pbpaste.
+    Requires Accessibility permission in System Preferences.
+  - `__init__.py`: create_backend() auto-detects platform.system().
+- Refactored session.py to use SessionBackend:
+  - Removed direct X11 imports from session.py.
+  - SessionState stripped of X11-specific fields (display, xvfb, xinput, etc.).
+  - SessionWorker accepts backend= parameter; auto-detects if None.
+  - _bootstrap() delegates to backend.check_dependencies() + backend.startup().
+  - capture_frame, inject_input, clipboard all go through self.backend.*().
+  - _teardown() calls backend.shutdown().
+- Server now supports Linux (X11/Xvfb), Windows (current desktop), macOS (current desktop).
+- Optional deps documented in requirements.txt comment.
+
+### Platform support matrix
+| | Linux x86 | Linux ARM64 | Windows | macOS |
+|---|---|---|---|---|
+| **Server** | ✅ | ✅ | ✅ NEW | ✅ NEW |
+| **Client** | ✅ | pending CI | ✅ | pending CI |
+
+### Next step
+- Add universal curl installer (install.sh) for all Linux distros.
+- Extend install_server_deps.sh for Arch Linux and ALT Linux.
