@@ -1,17 +1,24 @@
 #!/usr/bin/env python
 # -*- mode: python ; coding: utf-8 -*-
+# Single source of truth for the Linux/macOS client build.
+# Used by scripts/build_client_linux.sh and CI (release.yml).
 
 import os
-import sys
 from pathlib import Path
 from PyInstaller.utils.hooks import collect_submodules, collect_data_files
 
 block_cipher = None
 PROJECT_ROOT = Path(os.environ.get("PROJECT_ROOT", ".")).resolve()
 
-hidden = collect_submodules("PySide6") + ["PIL", "PIL.ImageQt"]
-datas = []
-datas += collect_data_files("PySide6")
+hidden = (
+    collect_submodules("asyncssh")
+    + collect_submodules("PIL")
+    + collect_submodules("mss")
+    + collect_submodules("remote_ssh_desktop")
+    + collect_submodules("PySide6")
+    + ["PIL.ImageQt"]
+)
+datas = collect_data_files("PySide6")
 datas.append((str(PROJECT_ROOT / "remote_ssh_desktop" / "version.py"), "remote_ssh_desktop"))
 
 a = Analysis(

@@ -253,28 +253,44 @@ Wayland does not allow apps to globally intercept system shortcuts such as `Supe
 
 ## Build executables
 
-Install PyInstaller:
+The spec files in the project root (`build_client_linux.spec`, `build_server_linux.spec`, `build_client_windows.spec`) are the single source of truth for PyInstaller options. The build scripts in `scripts/` wrap them and are what CI uses.
+
+Install build requirements first:
 
 ```bash
-pip install pyinstaller
+pip install -r requirements-build.txt
 ```
 
-Linux client:
+**Via build scripts (same as CI):**
 
 ```bash
-pyinstaller build_client_linux.spec
-```
+# Linux client
+PROJECT_ROOT="$PWD" bash scripts/build_client_linux.sh
 
-Windows client, run on Windows:
+# Linux server
+PROJECT_ROOT="$PWD" RSD_KIND=server bash scripts/build_server_linux.sh
+```
 
 ```powershell
-pyinstaller build_client_windows.spec
+# Windows client (run on Windows)
+$env:PROJECT_ROOT = (Get-Location).Path
+.\scripts\build_client_windows.ps1
 ```
 
-Linux server:
+**Directly via PyInstaller (equivalent):**
 
 ```bash
-pyinstaller build_server_linux.spec
+# Linux client
+PROJECT_ROOT="$PWD" pyinstaller --noconfirm --distpath dist --workpath build build_client_linux.spec
+
+# Linux server
+PROJECT_ROOT="$PWD" pyinstaller --noconfirm --distpath dist --workpath build build_server_linux.spec
+```
+
+```powershell
+# Windows client
+$env:PROJECT_ROOT = (Get-Location).Path
+pyinstaller --noconfirm --distpath dist --workpath build build_client_windows.spec
 ```
 
 ## Tests

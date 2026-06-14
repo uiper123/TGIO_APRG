@@ -292,3 +292,37 @@
 
 ### Next step
 - Continue with Prompt 6: align README and build process (fix broken build docs).
+
+## Cycle 16 completed — 2026-06-14
+
+### Done
+- Audited build pipeline: all five .spec files exist in the project root and work.
+- Identified gap: shell scripts built via CLI flags (slightly different hidden imports
+  than spec files); README showed spec files; CI used shell scripts — three
+  partially inconsistent paths.
+- Chose spec files as single source of truth:
+  - `build_client_linux.spec`: added `collect_submodules("asyncssh")`,
+    `collect_submodules("PIL")`, `collect_submodules("mss")`,
+    `collect_submodules("remote_ssh_desktop")`.
+  - `build_server_linux.spec`: added `asyncssh`, `PIL`, `mss` collect_submodules;
+    added `Xlib.ext.xtest`, `Xlib.ext.xfixes` hidden imports.
+  - `scripts/build_client_linux.sh`: replaced CLI-flag build with
+    `pyinstaller --noconfirm --distpath ... <spec>`.
+  - `scripts/build_client_windows.ps1`: replaced CLI-flag build with
+    `pyinstaller --noconfirm --distpath ... build_client_windows.spec`.
+- README "Build executables" section rewritten: shows scripts (=CI) as primary,
+  direct pyinstaller-spec as equivalent alternative. No more mention of
+  non-existent .spec paths or stale CLI-only build instructions.
+- Verified no other README↔code mismatches (format_remote_command placeholders
+  are all handled; --proxy/--worker/--session-id args all exist in server parser).
+
+### Verified
+- All six prompts from the original issue list are now addressed.
+
+### All 6 prompts complete
+- Prompt 1: CI smoke-run (xvfb, platform-aware, timeout) — applied via browser editor
+- Prompt 2: Removed av/PyAV + msgpack unused deps — commit ce86f7f9
+- Prompt 3: Server dep check at startup + install scripts + README platform table — commit b51b2238
+- Prompt 4: TOFU host key verification, explicit insecure checkbox — commit 8cf742c2
+- Prompt 5: Real drop-frame detection via sequence numbers — commit debbdf54
+- Prompt 6: Spec files as build source of truth, README+scripts synced — this commit
