@@ -21,6 +21,7 @@ project adheres to [Semantic Versioning](https://semver.org/).
 - `~/.ssh/config` import for simple `Host` entries with `HostName`, `User`, `Port`, `IdentityFile`, and `ProxyJump`.
 - ProxyJump/bastion support via the client `ProxyJump` field.
 - Client CLI `--profile NAME` and `--connect` for shortcut/script launches.
+- Quick Connect and recent-connection history with one-click reconnect, history clearing, capped non-secret storage, and CLI `--last`/`--recent`.
 
 ### Changed
 - Server proxy and clipboard loops now log disconnect/clipboard failures instead of silently swallowing them.

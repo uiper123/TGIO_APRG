@@ -85,3 +85,22 @@
 
 ### Next step
 - Continue with Quick Connect/history/recent profiles, or first-run diagnostics/self-test for local/server dependencies (`Xvfb`, `xauth`, `xclip`, `xterm`, Qt runtime) with clear UI feedback.
+
+## Cycle 4 completed — 2026-06-14
+
+### Done
+- Added separate recent-connection history storage at `~/.config/remote-ssh-desktop/history.json` with `REMOTE_SSH_DESKTOP_HISTORY` override, schema versioning, sanitization, deduplication, newest-first sorting, and a 20-entry cap.
+- Added Quick Connect UI: toolbar action, Recent list, connect-selected/double-click reconnect, and Clear history button.
+- Saved history only after a successful session hello, keeping passwords/key passphrases out of profiles/history.
+- Added client CLI aliases `--last` / `--recent` to load and immediately connect to the most recent saved connection.
+- Updated README and CHANGELOG.
+
+### Verified
+- Installed required headless Qt/X11 runtime packages in the test environment (`libegl1`, Qt xcb helpers, `xvfb`, `xauth`, `xclip`, `xterm`).
+- `python -m compileall -q remote_ssh_desktop tests` → OK.
+- `QT_QPA_PLATFORM=offscreen timeout 120 python -m pytest -q tests/test_history.py tests/test_client_ui.py -x --timeout=60` → `8 passed`.
+- `QT_QPA_PLATFORM=offscreen timeout 120 python -m pytest -q -x --timeout=60` → `20 passed`.
+- `QT_QPA_PLATFORM=offscreen timeout 20 python -m remote_ssh_desktop.client.main --help` → OK, shows `--last, --recent`.
+
+### Next step
+- Continue with Cycle 4 second priority: first-run self-test / diagnostics for client/server dependencies (`Xvfb`, `xauth`, `xclip`, `xterm`, Qt runtime, Python, asyncssh), with UI report/export, CLI `--self-test`, mocked tests for missing dependencies, then update PROGRESS/CHANGELOG/README and commit.

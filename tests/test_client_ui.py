@@ -7,7 +7,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import pytest
 from PySide6.QtWidgets import QApplication, QMessageBox
 
-from remote_ssh_desktop.client.main import MainWindow, TransportThread, ClientConfig, apply_theme
+from remote_ssh_desktop.client.main import MainWindow, TransportThread, ClientConfig, apply_theme, qt_user_role
+from remote_ssh_desktop.common.history import record_connection
 from remote_ssh_desktop.version import __version__
 
 
@@ -20,6 +21,7 @@ def app():
 
 def test_main_window_constructs_with_modern_controls(app, tmp_path, monkeypatch):
     monkeypatch.setenv("REMOTE_SSH_DESKTOP_PROFILES", str(tmp_path / "profiles.json"))
+    monkeypatch.setenv("REMOTE_SSH_DESKTOP_HISTORY", str(tmp_path / "history.json"))
     window = MainWindow()
     try:
         assert __version__ in window.windowTitle()
@@ -29,6 +31,8 @@ def test_main_window_constructs_with_modern_controls(app, tmp_path, monkeypatch)
         assert window.display.objectName() == "remoteDisplay"
         assert window.profile_combo.objectName() == "profileCombo"
         assert window.proxy_jump_edit.objectName() == "proxyJumpEdit"
+        assert window.recent_list.objectName() == "recentConnectionsList"
+        assert window.quick_connect_button.text() == "Quick Connect"
     finally:
         window.close()
 
@@ -109,5 +113,31 @@ def test_apply_profile_populates_connection_fields(app, tmp_path, monkeypatch):
         assert cfg.fps == 12
         assert cfg.quality == 70
         assert cfg.proxy_jump == "bastion"
+    finally:
+        window.close()
+
+
+def test_recent_history_appears_and_can_be_applied(app, tmp_path, monkeypatch):
+    monkeypatch.setenv("REMOTE_SSH_DESKTOP_PROFILES", str(tmp_path / "profiles.json"))
+    history_path = tmp_path / "history.json"
+    monkeypatch.setenv("REMOTE_SSH_DESKTOP_HISTORY", str(history_path))
+    record_connection(
+        "prod",
+        {"host": "prod.example", "port": 2222, "username": "alice", "screen": [1280, 720], "key_file": "~/.ssh/id_rsd"},
+        history_path,
+    )
+
+    window = MainWindow()
+    try:
+        assert window.recent_list.count() == 1
+        item = window.recent_list.item(0)
+        assert "prod" in item.text()
+        assert "alice@prod.example:2222" in item.text()
+        window.apply_history_entry(item.data(qt_user_role()))
+        cfg = window.config()
+        assert cfg.host == "prod.example"
+        assert cfg.port == 2222
+        assert cfg.username == "alice"
+        assert cfg.screen == (1280, 720)
     finally:
         window.close()

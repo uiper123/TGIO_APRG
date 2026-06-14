@@ -56,6 +56,7 @@ from remote_ssh_desktop.common.protocol import (
 from remote_ssh_desktop.crypto.keygen import authorized_keys_line, save_keypair
 from remote_ssh_desktop.version import __version__
 from remote_ssh_desktop.common.profiles import export_profiles, import_profiles, import_ssh_config, load_profiles, save_profiles, validate_profile_name
+from remote_ssh_desktop.common.history import clear_history, connection_label, latest_history, load_history, record_connection
 
 
 DEFAULT_REMOTE_COMMAND = (
@@ -658,6 +659,9 @@ class MainWindow(QMainWindow):
         self.transport: TransportThread | None = None
         self._tasks: list[QThread] = []
         self._profiles: dict[str, dict[str, Any]] = {}
+        self._history: list[dict[str, Any]] = []
+        self._pending_history_profile: dict[str, Any] | None = None
+        self._pending_history_name = ""
         self._clipboard_from_remote = False
         self._last_remote_clipboard = ""
         self._remote_rel = ""
@@ -668,6 +672,7 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self._load_defaults()
         self._load_profiles()
+        self._load_history()
         self._stats_timer = QTimer(self)
         self._stats_timer.timeout.connect(self.update_stats_label)
         self._stats_timer.start(1000)
@@ -685,6 +690,7 @@ class MainWindow(QMainWindow):
         self.addToolBar(toolbar)
         for text, handler in [
             ("Connect", self.connect_session),
+            ("Quick Connect", self.quick_connect),
             ("Disconnect", self.disconnect_session),
             ("Fullscreen", self.toggle_fullscreen),
             ("Generate key", self.open_keygen),
@@ -764,6 +770,23 @@ class MainWindow(QMainWindow):
         for widget in [self.profile_combo, self.profile_search_edit, self.save_profile_button, self.delete_profile_button, self.import_profile_button, self.export_profile_button, self.ssh_config_button]:
             profile_row.addWidget(widget)
         form.addRow("Profiles", profile_row)
+        recent_box = QVBoxLayout()
+        self.recent_list = QListWidget()
+        self.recent_list.setObjectName("recentConnectionsList")
+        self.recent_list.setMaximumHeight(118)
+        self.recent_list.itemDoubleClicked.connect(self.connect_recent_item)
+        recent_buttons = QHBoxLayout()
+        self.quick_connect_button = QPushButton("Quick Connect")
+        self.quick_connect_button.clicked.connect(self.quick_connect)
+        self.connect_recent_button = self._secondary(QPushButton("Connect selected"))
+        self.connect_recent_button.clicked.connect(self.connect_selected_recent)
+        self.clear_history_button = self._secondary(QPushButton("Clear history"))
+        self.clear_history_button.clicked.connect(self.clear_recent_history)
+        for widget in [self.quick_connect_button, self.connect_recent_button, self.clear_history_button]:
+            recent_buttons.addWidget(widget)
+        recent_box.addWidget(self.recent_list)
+        recent_box.addLayout(recent_buttons)
+        form.addRow("Recent", recent_box)
         for label, widget in [
             ("Host", self.host_edit), ("Port", self.port_edit), ("Username", self.user_edit),
             ("Password", self.password_edit), ("Private key", self.key_edit), ("Key passphrase", self.key_pass_edit),
@@ -887,6 +910,79 @@ class MainWindow(QMainWindow):
             self._set_status(f"Profiles unavailable: {exc}")
         self.refresh_profile_combo()
 
+    def _load_history(self):
+        try:
+            self._history = load_history()
+        except Exception as exc:
+            self._history = []
+            self._set_status(f"History unavailable: {exc}")
+        self.refresh_history_ui()
+
+    def refresh_history_ui(self):
+        if not hasattr(self, "recent_list"):
+            return
+        self.recent_list.clear()
+        for entry in self._history:
+            item = QListWidgetItem(connection_label(entry))
+            item.setData(qt_user_role(), entry)
+            self.recent_list.addItem(item)
+
+    def _current_profile_name(self) -> str:
+        name = self.profile_combo.currentText() if hasattr(self, "profile_combo") else ""
+        return name if name in self._profiles else ""
+
+    def _remember_successful_connection(self) -> None:
+        profile = self._pending_history_profile or self.current_profile_payload()
+        name = self._pending_history_name or self._current_profile_name()
+        try:
+            self._history = record_connection(name, profile)
+        except Exception as exc:
+            self._set_status(f"Connected, but history was not saved: {exc}")
+            return
+        self.refresh_history_ui()
+        self._pending_history_profile = None
+        self._pending_history_name = ""
+
+    def apply_history_entry(self, entry: dict[str, Any]) -> None:
+        profile = entry.get("profile")
+        if isinstance(profile, dict):
+            self.apply_profile(profile)
+            name = str(entry.get("profile_name", ""))
+            if name in self._profiles:
+                self.profile_combo.blockSignals(True)
+                self.profile_combo.setCurrentText(name)
+                self.profile_combo.blockSignals(False)
+
+    def connect_recent_item(self, item: QListWidgetItem) -> None:
+        entry = item.data(qt_user_role())
+        if isinstance(entry, dict):
+            self.apply_history_entry(entry)
+            self.connect_session()
+
+    def connect_selected_recent(self) -> None:
+        item = self.recent_list.currentItem()
+        if item:
+            self.connect_recent_item(item)
+
+    def quick_connect(self) -> None:
+        entry = self._history[0] if self._history else None
+        if entry:
+            self.apply_history_entry(entry)
+            self.connect_session()
+            return
+        name = self._current_profile_name()
+        if name:
+            self.apply_profile(self._profiles[name])
+            self.connect_session()
+            return
+        self._set_status("No recent connection or selected profile for Quick Connect")
+
+    def clear_recent_history(self) -> None:
+        clear_history()
+        self._history = []
+        self.refresh_history_ui()
+        self._set_status("Connection history cleared")
+
     def refresh_profile_combo(self):
         if not hasattr(self, "profile_combo"):
             return
@@ -967,6 +1063,7 @@ class MainWindow(QMainWindow):
             return
         self.refresh_profile_combo()
         self.profile_combo.setCurrentText(clean)
+        self._pending_history_name = clean
         self._set_status(f"Profile saved: {path}")
 
     def delete_current_profile(self):
@@ -1038,6 +1135,8 @@ class MainWindow(QMainWindow):
             return
         cfg = self.config()
         self.session_id_edit.setText(cfg.session_id)
+        self._pending_history_profile = self.current_profile_payload()
+        self._pending_history_name = self._current_profile_name()
         self.transport = TransportThread(cfg)
         self.transport.videoFrame.connect(self.handle_video_frame)
         self.transport.sessionInfo.connect(self.handle_session_info)
@@ -1072,6 +1171,7 @@ class MainWindow(QMainWindow):
         if folder:
             self._remote_root = str(folder)
         self.refresh_files()
+        self._remember_successful_connection()
         self._set_status("Connected")
 
     def send_input_message(self, message: dict):
@@ -1208,12 +1308,20 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Remote SSH Desktop client")
     parser.add_argument("--profile", default="", help="load a saved connection profile by name")
     parser.add_argument("--connect", action="store_true", help="connect immediately after loading --profile")
+    parser.add_argument("--last", "--recent", action="store_true", help="load and connect to the most recent connection from history")
     args = parser.parse_args()
     configure_qt_platform()
     app = QApplication(sys.argv[:1])
     apply_theme(app, "dark")
     window = MainWindow()
-    if args.profile:
+    if args.last:
+        entry = latest_history()
+        if entry:
+            window.apply_history_entry(entry)
+            QTimer.singleShot(0, window.connect_session)
+        else:
+            window._set_status("No recent connection in history")
+    elif args.profile:
         if args.profile in window._profiles:
             window.profile_combo.setCurrentText(args.profile)
             window.apply_profile(window._profiles[args.profile])

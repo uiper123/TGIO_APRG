@@ -94,8 +94,11 @@ The client includes a connection profile manager in the Connection panel:
 - search and load profiles from the dropdown
 - import/export profiles as JSON
 - import simple `~/.ssh/config` `Host` entries, including `HostName`, `User`, `Port`, `IdentityFile`, and `ProxyJump`
+- keep a separate recent-connection history for Quick Connect without storing secrets
 
 Profiles are stored by default at `~/.config/remote-ssh-desktop/profiles.json`. Override this location for tests or portable runs with `REMOTE_SSH_DESKTOP_PROFILES=/path/to/profiles.json`.
+
+Recent connections are stored separately at `~/.config/remote-ssh-desktop/history.json`. They contain sanitized connection settings only, are capped to the latest 20 entries, and can be cleared from the GUI. Override the path with `REMOTE_SSH_DESKTOP_HISTORY=/path/to/history.json`.
 
 ProxyJump/bastion hosts are passed through AsyncSSH's tunnel support. Put the bastion alias or `user@host` value in the `ProxyJump` field.
 
@@ -109,6 +112,14 @@ To connect immediately after loading the profile:
 
 ```bash
 python -m remote_ssh_desktop.client.main --profile prod --connect
+```
+
+To reconnect to the most recent successful connection:
+
+```bash
+python -m remote_ssh_desktop.client.main --last
+# or
+python -m remote_ssh_desktop.client.main --recent
 ```
 
 ## Server CLI
