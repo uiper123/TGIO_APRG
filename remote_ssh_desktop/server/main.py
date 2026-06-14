@@ -262,7 +262,7 @@ def main() -> None:
         print(f"remote-ssh-desktop-server {__version__}")
         return
     if args.self_test or args.self_test_json or args.self_test_output:
-        report = run_diagnostics()
+        report = run_diagnostics(role="server")
         if args.self_test_output:
             save_report(report, args.self_test_output)
         print(report_to_json(report) if args.self_test_json else report_to_text(report), end="")

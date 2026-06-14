@@ -68,10 +68,18 @@ def _python_module_check(module: str, *, severity: str = "error") -> DiagnosticC
     return DiagnosticCheck(f"Python module {module}", True, severity, f"Python module importable: {module}")
 
 
-def run_diagnostics(checker: Checker = _run) -> DiagnosticReport:
+def run_diagnostics(checker: Checker = _run, role: str = "client") -> DiagnosticReport:
     checks: list[DiagnosticCheck] = []
+    role = role.lower().strip()
+    if role not in {"client", "server", "full"}:
+        raise ValueError("role must be client, server, or full")
     checks.append(DiagnosticCheck("Python", sys.version_info >= (3, 11), "error", f"Python {platform.python_version()}", "Python 3.11+ is required."))
-    for module in ("asyncssh", "PIL", "mss", "Xlib", "msgpack", "PySide6"):
+    module_sets = {
+        "client": ("asyncssh", "PIL", "PySide6"),
+        "server": ("PIL", "mss", "Xlib"),
+        "full": ("asyncssh", "PIL", "mss", "Xlib", "msgpack", "PySide6"),
+    }
+    for module in module_sets[role]:
         checks.append(_python_module_check(module))
     if platform.system() == "Linux":
         checks.extend(

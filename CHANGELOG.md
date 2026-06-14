@@ -27,6 +27,8 @@ project adheres to [Semantic Versioning](https://semver.org/).
 - Quality presets (`LAN`, `WAN`, `Mobile`, `Custom`) for FPS/JPEG settings with profile/history persistence and live server updates.
 - `New Window` client action for multiple simultaneous connections, preloading the selected profile in the new client instance.
 - Active connection label with target/session id and uptime in the Desktop status area.
+- Role-aware client/server diagnostics so frozen server binaries do not require client-only Qt modules and frozen clients do not require server-only X11 capture modules.
+- Linux server one-file binary smoke validation for `--version` and `--self-test`.
 
 ### Changed
 - Server proxy and clipboard loops now log disconnect/clipboard failures instead of silently swallowing them.

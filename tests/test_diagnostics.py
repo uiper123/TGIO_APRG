@@ -14,7 +14,7 @@ def test_diagnostics_report_serializes_with_mocked_commands(tmp_path, monkeypatc
     monkeypatch.setattr("shutil.which", lambda command: f"/usr/bin/{command}")
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
 
-    report = run_diagnostics(checker=ok_checker)
+    report = run_diagnostics(checker=ok_checker, role="full")
     text = report_to_text(report)
     data = json.loads(report_to_json(report))
 
@@ -29,7 +29,7 @@ def test_diagnostics_missing_command_is_failure(monkeypatch):
     monkeypatch.setattr("shutil.which", lambda command: None if command == "Xvfb" else f"/usr/bin/{command}")
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
 
-    report = run_diagnostics(checker=ok_checker)
+    report = run_diagnostics(checker=ok_checker, role="client")
 
     assert not report.ok
     assert any(check.name == "Xvfb" and not check.ok and check.severity == "error" for check in report.checks)
@@ -39,10 +39,21 @@ def test_save_report_writes_text_and_json(tmp_path, monkeypatch):
     monkeypatch.setattr("platform.system", lambda: "Linux")
     monkeypatch.setattr("shutil.which", lambda command: f"/usr/bin/{command}")
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
-    report = run_diagnostics(checker=ok_checker)
+    report = run_diagnostics(checker=ok_checker, role="server")
 
     text_path = save_report(report, tmp_path / "self-test.txt")
     json_path = save_report(report, tmp_path / "self-test.json")
 
     assert text_path.read_text(encoding="utf-8").startswith("Remote SSH Desktop self-test")
     assert json.loads(json_path.read_text(encoding="utf-8"))["ok"] is True
+
+
+def test_server_diagnostics_skip_qt_modules():
+    def ok_checker(cmd, timeout):
+        return 0, "ok", ""
+
+    report = run_diagnostics(checker=ok_checker, role="server")
+    names = [check.name for check in report.checks]
+    assert "Python module PySide6" not in names
+    assert "Python module asyncssh" not in names
+    assert "Python module Xlib" in names

@@ -185,4 +185,23 @@
 - `QT_QPA_PLATFORM=offscreen timeout 120 python -m pytest -q tests/test_client_ui.py -x --timeout=60` → `9 passed`.
 
 ### Next step
-- Continue with release artifact build/run verification for Linux client/server, then inspect/push workflow status.
+- Continue with release artifact build/run validation: build Linux server/client one-file binaries locally where feasible, run `--version`/`--self-test`/help smoke checks, then commit/push any packaging fixes.
+
+## Cycle 10 completed — 2026-06-14
+
+### Done
+- Made diagnostics role-aware (`client`, `server`, `full`) so frozen server builds do not fail on client-only PySide6 and frozen client runs do not require server-only X11 capture modules.
+- Wired client CLI/UI self-test to `role="client"` and server self-test to `role="server"`.
+- Built the Linux server one-file PyInstaller artifact locally.
+- Verified the downloaded/built standalone Linux server artifact launches and reports self-test PASS.
+- Updated CHANGELOG.
+
+### Verified
+- `python -m compileall -q remote_ssh_desktop tests` → OK.
+- `QT_QPA_PLATFORM=offscreen timeout 120 python -m pytest -q -x --timeout=120` → `29 passed`.
+- `PROJECT_ROOT="$PWD" RSD_KIND=server RSD_NAME=remote-ssh-desktop-server bash scripts/build_server_linux.sh` → produced `dist/remote-ssh-desktop-server`.
+- `./dist/remote-ssh-desktop-server --version` → `remote-ssh-desktop-server 0.1.0`.
+- `QT_QPA_PLATFORM=offscreen timeout 60 ./dist/remote-ssh-desktop-server --self-test` → `Overall: PASS`.
+
+### Next step
+- Continue with Linux client one-file build/run validation and CI release artifact download verification once a tagged workflow artifact exists.

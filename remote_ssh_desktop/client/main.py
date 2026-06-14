@@ -902,7 +902,7 @@ class MainWindow(QMainWindow):
         self._last_diagnostic_report = None
 
     def run_self_test(self):
-        report = run_diagnostics()
+        report = run_diagnostics(role="client")
         self._last_diagnostic_report = report
         text = report_to_text(report)
         self.diagnostics_output.setPlainText(text)
@@ -911,7 +911,7 @@ class MainWindow(QMainWindow):
         self._set_status("Self-test passed" if report.ok else "Self-test found issues")
 
     def export_self_test_report(self):
-        report = self._last_diagnostic_report or run_diagnostics()
+        report = self._last_diagnostic_report or run_diagnostics(role="client")
         path, _ = QFileDialog.getSaveFileName(self, "Export self-test report", "remote-ssh-desktop-self-test.txt", "Text files (*.txt);;JSON files (*.json);;All files (*)")
         if not path:
             return
@@ -1458,7 +1458,7 @@ def main() -> None:
     parser.add_argument("--self-test-json", action="store_true", help="print dependency diagnostics as JSON and exit")
     args = parser.parse_args()
     if args.self_test or args.self_test_json:
-        report = run_diagnostics()
+        report = run_diagnostics(role="client")
         if args.self_test_json:
             from remote_ssh_desktop.common.diagnostics import report_to_json
             print(report_to_json(report), end="")
