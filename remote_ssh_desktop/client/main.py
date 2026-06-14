@@ -217,6 +217,8 @@ class TransportThread(QThread):
         self._drops_since_last_stats = 0  # drops per ping interval, reset after each FRAME_STATS
         self._last_keyframe: bytes = b""
         self._last_video_seq = 0  # last seen video frame sequence number
+        self._bytes_received = 0  # total payload bytes received (for bandwidth)
+        self._last_latency_ms = 0  # most recent round-trip latency
         self._active_transfers: set[str] = set()
         self._cancelled_transfers: set[str] = set()
 
@@ -283,6 +285,7 @@ class TransportThread(QThread):
     async def _reader_loop(self, reader) -> None:
         while self._running:
             frame = await read_frame(reader)
+            self._bytes_received += len(frame.payload) + 6  # payload + 6-byte header
             if frame.kind == FRAME_VIDEO:
                 # Frame format (Cycle 15+):
                 #   bytes 0-3: big-endian uint32 sequence number
@@ -338,6 +341,7 @@ class TransportThread(QThread):
         if sent_at is None:
             return
         latency_ms = int((time.monotonic() - sent_at) * 1000)
+        self._last_latency_ms = latency_ms
         # Report drops accumulated since the last ping interval, then reset.
         # This gives the server a per-cycle count that matches its > 3 threshold.
         _interval_drops = self._drops_since_last_stats
@@ -766,6 +770,8 @@ class MainWindow(QMainWindow):
         self._frames_rendered = 0
         self._last_frame_sample = time.monotonic()
         self._last_frame_count = 0
+        self._last_bytes_count = 0
+        self._last_frame_bytes: bytes = b""
         self._connection_started_at = 0.0
         self._connection_label = "—"
         self._child_windows: list[MainWindow] = []
@@ -794,8 +800,10 @@ class MainWindow(QMainWindow):
             ("New Window", self.open_new_window),
             ("Disconnect", self.disconnect_session),
             ("Fullscreen", self.toggle_fullscreen),
+            ("Screenshot", self.save_screenshot),
             ("Generate key", self.open_keygen),
             ("Self-test", self.run_self_test),
+            ("Shortcuts", self.show_shortcuts_help),
             ("Ctrl+Alt+Del", lambda: self.send_combo(["ctrl", "alt"], "Delete")),
             ("Super", lambda: self.send_key("Super_L")),
             ("Esc", lambda: self.send_key("Escape")),
@@ -1052,6 +1060,56 @@ class MainWindow(QMainWindow):
             return False
         return True
 
+    def save_screenshot(self) -> None:
+        """Save the most recent remote frame to a PNG/JPEG file."""
+        if not self._last_frame_bytes:
+            self._set_status("No frame captured yet — connect first")
+            return
+        default_name = f"remote-screenshot-{int(time.time())}.png"
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save screenshot", default_name,
+            "PNG image (*.png);;JPEG image (*.jpg);;All files (*)"
+        )
+        if not path:
+            return
+        try:
+            from PySide6.QtGui import QImage
+            img = QImage()
+            if not img.loadFromData(self._last_frame_bytes):
+                self._set_status("Screenshot failed: could not decode frame")
+                return
+            if img.save(path):
+                self._set_status(f"Screenshot saved: {path}")
+            else:
+                self._set_status("Screenshot failed: could not write file")
+        except Exception as exc:
+            self._set_status(f"Screenshot failed: {exc}")
+
+    def show_shortcuts_help(self) -> None:
+        """Show a dialog with toolbar actions, presets, and usage tips."""
+        QMessageBox.information(
+            self,
+            "Shortcuts & tips",
+            "<b>Toolbar actions</b><br>"
+            "• <b>Connect / Quick Connect</b> — start a session (Quick uses last/selected profile)<br>"
+            "• <b>New Window</b> — open another client for a second simultaneous session<br>"
+            "• <b>Fullscreen</b> — toggle fullscreen remote display<br>"
+            "• <b>Screenshot</b> — save the current remote frame as an image<br>"
+            "• <b>Self-test</b> — check local/remote dependencies<br>"
+            "• <b>Ctrl+Alt+Del / Super / Esc</b> — send special keys (Wayland-safe)<br><br>"
+            "<b>Quality presets</b><br>"
+            "• <b>LAN</b> — 30 FPS / JPEG 90 (fast local network)<br>"
+            "• <b>WAN</b> — 18 FPS / JPEG 75 (balanced, default)<br>"
+            "• <b>Mobile</b> — 10 FPS / JPEG 55 (low bandwidth)<br>"
+            "Manual FPS/quality edits switch the preset to Custom.<br><br>"
+            "<b>Clipboard</b> — enable 'Sync clipboard' to share text both ways<br>"
+            "<b>Files</b> — drag &amp; drop files onto the remote display to upload<br>"
+            "<b>Security</b> — host keys are verified (TOFU) by default; the insecure "
+            "checkbox disables verification only when you explicitly opt in<br><br>"
+            "<b>Live stats</b> — the status bar shows a 🟢/🟡/🔴 quality dot, FPS, "
+            "ping, live bandwidth, and dropped-frame count."
+        )
+
     def update_stats_label(self) -> None:
         now = time.monotonic()
         elapsed = max(now - self._last_frame_sample, 0.001)
@@ -1061,7 +1119,30 @@ class MainWindow(QMainWindow):
         self._last_frame_count = self._frames_rendered
         transport = self.transport
         quality = getattr(getattr(transport, "config", None), "quality", "—") if transport else "—"
-        self.stats.setText(f"FPS {fps:.1f} · quality {quality} · session {self.session_id_edit.text().strip() or '—'}")
+        # Live network metrics
+        ping_text = "—"
+        bw_text = "—"
+        drop_text = ""
+        dot = "⚪"
+        if transport:
+            bytes_now = getattr(transport, "_bytes_received", 0)
+            bw_kbps = max(bytes_now - self._last_bytes_count, 0) / elapsed / 1024.0
+            self._last_bytes_count = bytes_now
+            if bw_kbps >= 1024:
+                bw_text = f"{bw_kbps / 1024:.1f} MB/s"
+            else:
+                bw_text = f"{bw_kbps:.0f} KB/s"
+            latency = getattr(transport, "_last_latency_ms", 0)
+            if latency:
+                ping_text = f"{latency} ms"
+                # Color-coded connection quality dot
+                dot = "🟢" if latency < 80 else ("🟡" if latency < 180 else "🔴")
+            dropped = getattr(transport, "_dropped_frames", 0)
+            if dropped:
+                drop_text = f" · dropped {dropped}"
+        self.stats.setText(
+            f"{dot} FPS {fps:.1f} · ping {ping_text} · {bw_text} · quality {quality}{drop_text}"
+        )
         if hasattr(self, "connection_label"):
             if self._connection_started_at:
                 uptime = int(time.monotonic() - self._connection_started_at)
@@ -1405,6 +1486,8 @@ class MainWindow(QMainWindow):
 
     def handle_video_frame(self, jpeg_bytes: bytes) -> None:
         self._frames_rendered += 1
+        if jpeg_bytes[:2] == b"\xff\xd8":
+            self._last_frame_bytes = jpeg_bytes  # keep last full keyframe for screenshots
         self.display.setFrame(jpeg_bytes)
 
     def handle_disconnect(self, message: str):

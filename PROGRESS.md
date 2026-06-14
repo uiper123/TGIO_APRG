@@ -424,3 +424,23 @@
 
 ### Next step
 - CI macOS + ARM64 matrix (needs manual release.yml edit — proxy restriction).
+
+## Cycle 20 completed — 2026-06-14
+
+### Done — UI enhancements
+- Live network metrics in the status bar:
+  - Added `_bytes_received` counter to TransportThread (incremented in _reader_loop).
+  - Added `_last_latency_ms` (stored in _handle_pong).
+  - update_stats_label now shows: color-coded quality dot (🟢 <80 ms / 🟡 <180 ms / 🔴),
+    FPS, ping (ms), live bandwidth (KB/s or MB/s), JPEG quality, and dropped-frame count.
+- Screenshot capture:
+  - "Screenshot" toolbar button → save_screenshot() saves the last full keyframe
+    via QFileDialog as PNG/JPEG.
+  - handle_video_frame stores the last full keyframe in _last_frame_bytes.
+- Shortcuts & tips dialog:
+  - "Shortcuts" toolbar button → show_shortcuts_help() with toolbar actions,
+    quality preset reference, clipboard/file/security tips, and stats legend.
+
+### Next step
+- Optional: bandwidth/latency history graph, audio enable toggle (needs server --audio flag),
+  multi-monitor selection.
