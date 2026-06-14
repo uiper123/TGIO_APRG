@@ -87,7 +87,7 @@ def run_diagnostics(checker: Checker = _run, role: str = "client") -> Diagnostic
                 _command_check("Xvfb", "Xvfb", ["-help"], checker=checker),
                 _command_check("xauth", "xauth", ["-V"], checker=checker),
                 _command_check("xclip", "xclip", ["-version"], checker=checker),
-                _command_check("xterm", "xterm", ["-version"], checker=checker),
+                _command_check("xterm", "xterm", ["-version"], severity="warning", checker=checker),
             ]
         )
         if not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY") or os.environ.get("QT_QPA_PLATFORM")):

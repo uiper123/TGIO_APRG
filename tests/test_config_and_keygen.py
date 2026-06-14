@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import stat
 
 import pytest
@@ -22,8 +23,10 @@ def test_keygen_writes_secure_ed25519_pair(tmp_path):
 
     assert private_path.exists()
     assert public_path.exists()
-    assert stat.S_IMODE(private_path.stat().st_mode) == 0o600
-    assert stat.S_IMODE(public_path.stat().st_mode) == 0o644
+    if os.name != "nt":
+        # Windows does not honour POSIX permission bits set via os.chmod.
+        assert stat.S_IMODE(private_path.stat().st_mode) == 0o600
+        assert stat.S_IMODE(public_path.stat().st_mode) == 0o644
     assert public_path.read_text(encoding="utf-8").startswith("ssh-ed25519 ")
     assert "authorized_keys" in authorized_keys_helper(public_path)
 
