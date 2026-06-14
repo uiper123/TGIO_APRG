@@ -16,7 +16,7 @@ from typing import Any, Callable
 
 import asyncssh
 from PySide6.QtCore import QPointF, QThread, Qt, Signal, QTimer
-from PySide6.QtGui import QAction, QColor, QImage, QKeyEvent, QKeySequence, QPainter, QShortcut
+from PySide6.QtGui import QAction, QColor, QFont, QImage, QKeyEvent, QKeySequence, QPainter, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -42,6 +42,12 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
     QStyleFactory,
+    QMenu,
+    QPlainTextEdit,
+    QScrollArea,
+    QSizePolicy,
+    QSplitter,
+    QToolButton,
 )
 
 from remote_ssh_desktop.common.diagnostics import report_to_text, run_diagnostics, save_report
@@ -108,6 +114,32 @@ QProgressBar::chunk { background: #22c55e; border-radius: 8px; }
 QLabel[muted="true"] { color: #94a3b8; }
 QLabel[status="true"] { background: #111827; border: 1px solid #263246; border-radius: 10px; padding: 8px 10px; }
 QFrame#remoteDisplay { border: 1px solid #263246; border-radius: 16px; background: #05070d; }
+QToolBar::separator { background: #273244; width: 1px; margin: 6px 6px; }
+QToolBar QToolButton:disabled { background: #1b2433; color: #5b6b82; }
+QWidget#toolbarSpacer { background: transparent; }
+QComboBox#themeCombo { min-width: 92px; }
+QScrollArea#connectionScroll, QWidget#connectionPanel { background: transparent; border: 0; }
+QToolButton#collapseHeader { background: transparent; color: #93c5fd; border: 0; padding: 8px 4px; font-weight: 700; text-align: left; }
+QToolButton#collapseHeader:hover { color: #bfdbfe; }
+QToolButton#profileMenuButton { background: #243044; color: #d7e1f0; border: 0; border-radius: 8px; padding: 6px 12px; font-weight: 700; }
+QToolButton#profileMenuButton:hover { background: #31415c; }
+QToolButton#profileMenuButton::menu-indicator { image: none; width: 0; }
+QPlainTextEdit#remoteCommandEdit { background: #0b1322; color: #eef4ff; border: 1px solid #334155; border-radius: 8px; padding: 8px; font-family: "JetBrains Mono", Consolas, monospace; }
+QPlainTextEdit#remoteCommandEdit:focus { border-color: #60a5fa; }
+QWidget#statusBar { background: transparent; }
+QWidget#metricChip { background: #111827; border: 1px solid #263246; border-radius: 8px; }
+QLabel#metricCaption { color: #7c8aa3; }
+QLabel#metricValue { color: #e6edf3; font-weight: 700; }
+QFrame#statusSep { color: #273244; max-width: 1px; }
+QLabel#statusChip[state="connected"] { color: #22c55e; }
+QLabel#statusChip[state="connecting"] { color: #f59e0b; }
+QLabel#statusChip[state="disconnected"] { color: #9fb1c8; }
+QCheckBox#hostKeyWarning { color: #fca5a5; font-weight: 700; }
+QLabel#monitorValue { font-size: 26px; font-weight: 800; color: #e6edf3; padding: 6px; }
+QPushButton#primaryConnect { padding: 11px 14px; font-size: 14px; }
+QSplitter#sessionSplitter::handle { background: #1b2433; border-radius: 4px; margin: 2px; }
+QPushButton:disabled { background: #1b2433; color: #5b6b82; }
+QLineEdit, QSpinBox, QComboBox { min-height: 18px; }
 """
 
 LIGHT_QSS = """
@@ -132,6 +164,32 @@ QProgressBar::chunk { background: #16a34a; border-radius: 8px; }
 QLabel[muted="true"] { color: #64748b; }
 QLabel[status="true"] { background: #ffffff; border: 1px solid #dbe4f0; border-radius: 10px; padding: 8px 10px; }
 QFrame#remoteDisplay { border: 1px solid #dbe4f0; border-radius: 16px; background: #0f172a; }
+QToolBar::separator { background: #dbe4f0; width: 1px; margin: 6px 6px; }
+QToolBar QToolButton:disabled { background: #e2e8f0; color: #94a3b8; }
+QWidget#toolbarSpacer { background: transparent; }
+QComboBox#themeCombo { min-width: 92px; }
+QScrollArea#connectionScroll, QWidget#connectionPanel { background: transparent; border: 0; }
+QToolButton#collapseHeader { background: transparent; color: #1d4ed8; border: 0; padding: 8px 4px; font-weight: 700; text-align: left; }
+QToolButton#collapseHeader:hover { color: #1e40af; }
+QToolButton#profileMenuButton { background: #e2e8f0; color: #0f172a; border: 0; border-radius: 8px; padding: 6px 12px; font-weight: 700; }
+QToolButton#profileMenuButton:hover { background: #cbd5e1; }
+QToolButton#profileMenuButton::menu-indicator { image: none; width: 0; }
+QPlainTextEdit#remoteCommandEdit { background: #ffffff; color: #0f172a; border: 1px solid #cbd5e1; border-radius: 8px; padding: 8px; font-family: "JetBrains Mono", Consolas, monospace; }
+QPlainTextEdit#remoteCommandEdit:focus { border-color: #2563eb; }
+QWidget#statusBar { background: transparent; }
+QWidget#metricChip { background: #ffffff; border: 1px solid #dbe4f0; border-radius: 8px; }
+QLabel#metricCaption { color: #64748b; }
+QLabel#metricValue { color: #0f172a; font-weight: 700; }
+QFrame#statusSep { color: #dbe4f0; max-width: 1px; }
+QLabel#statusChip[state="connected"] { color: #15803d; }
+QLabel#statusChip[state="connecting"] { color: #b45309; }
+QLabel#statusChip[state="disconnected"] { color: #64748b; }
+QCheckBox#hostKeyWarning { color: #b91c1c; font-weight: 700; }
+QLabel#monitorValue { font-size: 26px; font-weight: 800; color: #0f172a; padding: 6px; }
+QPushButton#primaryConnect { padding: 11px 14px; font-size: 14px; }
+QSplitter#sessionSplitter::handle { background: #dbe4f0; border-radius: 4px; margin: 2px; }
+QPushButton:disabled { background: #e2e8f0; color: #94a3b8; }
+QLineEdit, QSpinBox, QComboBox { min-height: 18px; }
 """
 
 
@@ -944,34 +1002,7 @@ class MainWindow(QMainWindow):
             self.connection_log.append(f"[{stamp}] {text}")
 
     def _build_ui(self):
-        toolbar = QToolBar("Remote controls")
-        toolbar.setMovable(False)
-        self.addToolBar(toolbar)
-        for text, handler in [
-            ("Connect", self.connect_session),
-            ("Quick Connect", self.quick_connect),
-            ("New Window", self.open_new_window),
-            ("Setup server", self.setup_server),
-            ("Disconnect", self.disconnect_session),
-            ("Fullscreen", self.toggle_fullscreen),
-            ("Screenshot", self.save_screenshot),
-            ("Record", self.toggle_recording),
-            ("Generate key", self.open_keygen),
-            ("Self-test", self.run_self_test),
-            ("Shortcuts", self.show_shortcuts_help),
-            ("Ctrl+Alt+Del", lambda: self.send_combo(["ctrl", "alt"], "Delete")),
-            ("Super", lambda: self.send_key("Super_L")),
-            ("Esc", lambda: self.send_key("Escape")),
-        ]:
-            action = QAction(text, self)
-            action.triggered.connect(handler)
-            toolbar.addAction(action)
-        self.theme_combo = QComboBox()
-        self.theme_combo.addItems(["Dark", "Light"])
-        self.theme_combo.currentTextChanged.connect(lambda value: apply_theme(QApplication.instance(), value.lower()))
-        toolbar.addSeparator()
-        toolbar.addWidget(QLabel("Theme"))
-        toolbar.addWidget(self.theme_combo)
+        self._build_toolbar()
 
         self.tabs = QTabWidget()
         self.session_tab = QWidget()
@@ -984,127 +1015,382 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.diagnostics_tab, "Diagnostics")
         self.setCentralWidget(self.tabs)
 
-        session_layout = QVBoxLayout(self.session_tab)
-        session_layout.setContentsMargins(14, 14, 14, 14)
-        session_layout.setSpacing(12)
-        hero = QLabel("SSH-only isolated X11 desktop — no VNC/RDP, encrypted transport, SFTP shared folder.")
-        hero.setProperty("muted", "true")
-        session_layout.addWidget(hero)
-        box = QGroupBox("Connection")
-        form = QFormLayout(box)
+        self._build_session_tab()
+        self._build_files_tab()
+        self._build_diagnostics_tab()
+        self._build_monitor_tab()
+
+        self.clipboard = QApplication.clipboard()
+        self.clipboard.dataChanged.connect(self.local_clipboard_changed)
+        self._register_hotkeys()
+        self._update_action_states(connected=False)
+
+    # ── Toolbar ─────────────────────────────────────────────────────────
+    def _build_toolbar(self):
+        from PySide6.QtCore import QSize
+        toolbar = QToolBar("Remote controls")
+        toolbar.setObjectName("mainToolbar")
+        toolbar.setMovable(False)
+        toolbar.setFloatable(False)
+        toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+        toolbar.setIconSize(QSize(16, 16))
+        self.addToolBar(toolbar)
+        self.toolbar = toolbar
+
+        def act(text, handler, tip=""):
+            a = QAction(text, self)
+            a.triggered.connect(handler)
+            if tip:
+                a.setToolTip(tip)
+            toolbar.addAction(a)
+            return a
+
+        self.act_connect = act("Connect", self.connect_session, "Connect to the configured host (Ctrl+Enter)")
+        self.act_quick = act("Quick Connect", self.quick_connect, "Connect using the most recent / selected profile")
+        self.act_disconnect = act("Disconnect", self.disconnect_session, "Disconnect the current session (Ctrl+D)")
+        toolbar.addSeparator()
+        self.act_new_window = act("New Window", self.open_new_window, "Open another client window")
+        self.act_fullscreen = act("Fullscreen", self.toggle_fullscreen, "Toggle fullscreen remote display (F11)")
+        toolbar.addSeparator()
+        self.act_screenshot = act("Screenshot", self.save_screenshot, "Save the current remote frame (Ctrl+S)")
+        self.act_record = act("Record", self.toggle_recording, "Start/stop recording remote frames (Ctrl+R)")
+        toolbar.addSeparator()
+        self.act_setup = act("Setup server", self.setup_server, "Install the server + your key over SSH")
+        self.act_keygen = act("Generate key", self.open_keygen, "Generate an SSH key pair")
+        self.act_selftest = act("Self-test", self.run_self_test, "Run local dependency diagnostics")
+        toolbar.addSeparator()
+        self.act_shortcuts = act("Shortcuts", self.show_shortcuts_help, "Show keyboard shortcuts & tips")
+        self.act_cad = act("Ctrl+Alt+Del", lambda: self.send_combo(["ctrl", "alt"], "Delete"), "Send Ctrl+Alt+Del")
+        self.act_super = act("Super", lambda: self.send_key("Super_L"), "Send the Super/Windows key")
+        self.act_esc = act("Esc", lambda: self.send_key("Escape"), "Send Escape")
+
+        spacer = QWidget()
+        spacer.setObjectName("toolbarSpacer")
+        spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        toolbar.addWidget(spacer)
+        theme_label = QLabel("Theme")
+        theme_label.setProperty("muted", "true")
+        toolbar.addWidget(theme_label)
+        self.theme_combo = QComboBox()
+        self.theme_combo.setObjectName("themeCombo")
+        self.theme_combo.addItems(["Dark", "Light"])
+        self.theme_combo.currentTextChanged.connect(lambda value: apply_theme(QApplication.instance(), value.lower()))
+        toolbar.addWidget(self.theme_combo)
+
+    def _update_action_states(self, connected: bool, connecting: bool = False) -> None:
+        busy = connecting
+        for a in (self.act_disconnect, self.act_fullscreen, self.act_screenshot, self.act_record):
+            a.setEnabled(connected)
+        self.act_connect.setEnabled(not connected and not busy)
+        self.act_quick.setEnabled(not connected and not busy)
+        if hasattr(self, "connect_button"):
+            self.connect_button.setEnabled(not connected and not busy)
+            self.connect_button.setText("Connecting\u2026" if busy else ("Connected" if connected else "Connect"))
+
+    # ── Shared form helpers ─────────────────────────────────────────────
+    def _style_form(self, form: QFormLayout) -> None:
         form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
-        form.setHorizontalSpacing(14)
+        form.setFormAlignment(Qt.AlignmentFlag.AlignTop)
+        form.setHorizontalSpacing(16)
         form.setVerticalSpacing(10)
-        self.host_edit = QLineEdit()
-        self.port_edit = QSpinBox(); self.port_edit.setRange(1, 65535); self.port_edit.setValue(22)
-        self.user_edit = QLineEdit()
-        self.password_edit = QLineEdit(); self.password_edit.setEchoMode(QLineEdit.EchoMode.Password)
-        self.key_edit = QLineEdit()
-        self.key_pass_edit = QLineEdit(); self.key_pass_edit.setEchoMode(QLineEdit.EchoMode.Password)
-        self.remote_command_edit = QLineEdit(DEFAULT_REMOTE_COMMAND)
-        self.session_id_edit = QLineEdit(uuid.uuid4().hex[:12])
-        self.screen_edit = QLineEdit("1920x1080")
-        self.shared_folder_edit = QLineEdit("~/RemoteShared")
-        self.known_hosts_edit = QLineEdit("")
-        self.verify_host_key_check = QCheckBox("Don't verify host key (insecure — disables MITM protection)")
-        self.proxy_jump_edit = QLineEdit("")
-        self.proxy_jump_edit.setPlaceholderText("Optional: bastion host alias or user@host")
-        self.proxy_jump_edit.setObjectName("proxyJumpEdit")
-        self.quality_preset_combo = QComboBox()
-        self.quality_preset_combo.addItems([*QUALITY_PRESETS.keys(), "Custom"])
-        self.quality_preset_combo.setCurrentText("WAN")
-        self.quality_preset_combo.currentTextChanged.connect(self.apply_quality_preset)
-        self.quality_preset_combo.setObjectName("qualityPresetCombo")
-        self.fps_edit = QSpinBox(); self.fps_edit.setRange(1, 60); self.fps_edit.setValue(QUALITY_PRESETS["WAN"]["fps"])
-        self.quality_edit = QSpinBox(); self.quality_edit.setRange(20, 95); self.quality_edit.setValue(QUALITY_PRESETS["WAN"]["quality"])
-        self.fps_edit.valueChanged.connect(lambda _=None: self.mark_quality_custom())
-        self.quality_edit.valueChanged.connect(lambda _=None: self.mark_quality_custom())
-        self.idle_timeout_edit = QSpinBox(); self.idle_timeout_edit.setRange(5, 86400); self.idle_timeout_edit.setValue(300)
-        self.clipboard_max_edit = QSpinBox(); self.clipboard_max_edit.setRange(1024, 100_000_000); self.clipboard_max_edit.setValue(1_000_000)
-        self.persistent_check = QCheckBox("Persistent session")
-        self.clipboard_check = QCheckBox("Sync clipboard")
-        self.clipboard_check.setChecked(True)
-        self.reconnect_check = QCheckBox("Auto reconnect")
-        self.reconnect_check.setChecked(True)
+        form.setContentsMargins(4, 4, 4, 4)
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.DontWrapRows)
+
+    def _collapsible(self, title: str, expanded: bool = False):
+        container = QWidget()
+        lay = QVBoxLayout(container)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(4)
+        header = QToolButton()
+        header.setObjectName("collapseHeader")
+        header.setText(title)
+        header.setCheckable(True)
+        header.setChecked(expanded)
+        header.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        header.setArrowType(Qt.ArrowType.DownArrow if expanded else Qt.ArrowType.RightArrow)
+        header.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        body = QWidget()
+        body.setVisible(expanded)
+        lay.addWidget(header)
+        lay.addWidget(body)
+
+        def _toggle(checked: bool) -> None:
+            body.setVisible(checked)
+            header.setArrowType(Qt.ArrowType.DownArrow if checked else Qt.ArrowType.RightArrow)
+
+        header.toggled.connect(_toggle)
+        return container, body
+
+    # ── Session (Desktop) tab: two-panel layout ─────────────────────────
+    def _build_session_tab(self):
+        outer = QVBoxLayout(self.session_tab)
+        outer.setContentsMargins(16, 16, 16, 16)
+        outer.setSpacing(12)
+
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.setObjectName("sessionSplitter")
+        splitter.setChildrenCollapsible(False)
+        splitter.setHandleWidth(10)
+
+        left_scroll = QScrollArea()
+        left_scroll.setObjectName("connectionScroll")
+        left_scroll.setWidgetResizable(True)
+        left_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        left_scroll.setMinimumWidth(360)
+        left_scroll.setMaximumWidth(560)
+        left_scroll.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
+
+        panel = QWidget()
+        panel.setObjectName("connectionPanel")
+        panel_layout = QVBoxLayout(panel)
+        panel_layout.setContentsMargins(0, 0, 8, 0)
+        panel_layout.setSpacing(12)
+
+        hero = QLabel("SSH-only isolated X11 desktop \u2014 encrypted transport, SFTP shared folder. No VNC/RDP.")
+        hero.setWordWrap(True)
+        hero.setProperty("muted", "true")
+        panel_layout.addWidget(hero)
+        panel_layout.addWidget(self._build_profiles_section())
+        panel_layout.addWidget(self._build_recent_section())
+        panel_layout.addWidget(self._build_connection_section())
+        panel_layout.addWidget(self._build_display_section())
+        panel_layout.addWidget(self._build_folder_section())
+        panel_layout.addWidget(self._build_advanced_section())
+
+        self.connect_button = QPushButton("Connect")
+        self.connect_button.setObjectName("primaryConnect")
+        self.connect_button.clicked.connect(self.connect_session)
+        panel_layout.addWidget(self.connect_button)
+        panel_layout.addStretch(1)
+        left_scroll.setWidget(panel)
+
+        right = QWidget()
+        right_layout = QVBoxLayout(right)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(10)
+        self.display = RemoteDisplayWidget()
+        self.display.setObjectName("remoteDisplay")
+        self.display.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.display.setMinimumSize(480, 360)
+        self.display.inputMessage.connect(self.send_input_message)
+        self.display.localFilesDropped.connect(self.upload_local_files)
+        right_layout.addWidget(self.display, 1)
+        right_layout.addWidget(self._build_status_bar())
+
+        splitter.addWidget(left_scroll)
+        splitter.addWidget(right)
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        splitter.setSizes([420, 1000])
+        outer.addWidget(splitter, 1)
+
+    def _build_profiles_section(self) -> QGroupBox:
+        box = QGroupBox("Profiles")
+        lay = QVBoxLayout(box)
+        lay.setSpacing(8)
+        row = QHBoxLayout()
+        row.setSpacing(8)
         self.profile_combo = QComboBox()
         self.profile_combo.setObjectName("profileCombo")
         self.profile_combo.setEditable(False)
+        self.profile_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.profile_combo.currentTextChanged.connect(self.load_selected_profile)
         self.profile_search_edit = QLineEdit()
-        self.profile_search_edit.setPlaceholderText("Search profiles")
+        self.profile_search_edit.setPlaceholderText("Search\u2026")
+        self.profile_search_edit.setClearButtonEnabled(True)
+        self.profile_search_edit.setMaximumWidth(150)
         self.profile_search_edit.textChanged.connect(self.refresh_profile_combo)
-        profile_row = QHBoxLayout()
-        self.save_profile_button = self._secondary(QPushButton("Save profile"))
-        self.save_profile_button.clicked.connect(self.save_current_profile)
-        self.delete_profile_button = self._secondary(QPushButton("Delete"))
-        self.delete_profile_button.clicked.connect(self.delete_current_profile)
-        self.import_profile_button = self._secondary(QPushButton("Import JSON"))
-        self.import_profile_button.clicked.connect(self.import_profiles_dialog)
-        self.export_profile_button = self._secondary(QPushButton("Export JSON"))
-        self.export_profile_button.clicked.connect(self.export_profiles_dialog)
-        self.ssh_config_button = self._secondary(QPushButton("Import ~/.ssh/config"))
-        self.ssh_config_button.clicked.connect(self.import_ssh_config_dialog)
-        for widget in [self.profile_combo, self.profile_search_edit, self.save_profile_button, self.delete_profile_button, self.import_profile_button, self.export_profile_button, self.ssh_config_button]:
-            profile_row.addWidget(widget)
-        form.addRow("Profiles", profile_row)
-        recent_box = QVBoxLayout()
+        menu_btn = QToolButton()
+        menu_btn.setObjectName("profileMenuButton")
+        menu_btn.setText("\u22ef")
+        menu_btn.setToolTip("Profile actions")
+        menu_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        menu = QMenu(menu_btn)
+        menu.addAction("Save profile", self.save_current_profile)
+        menu.addAction("Delete profile", self.delete_current_profile)
+        menu.addSeparator()
+        menu.addAction("Import JSON\u2026", self.import_profiles_dialog)
+        menu.addAction("Export JSON\u2026", self.export_profiles_dialog)
+        menu.addAction("Import ~/.ssh/config", self.import_ssh_config_dialog)
+        menu_btn.setMenu(menu)
+        self.profile_menu_button = menu_btn
+        row.addWidget(self.profile_combo, 1)
+        row.addWidget(self.profile_search_edit)
+        row.addWidget(menu_btn)
+        lay.addLayout(row)
+        return box
+
+    def _build_recent_section(self) -> QGroupBox:
+        box = QGroupBox("Recent")
+        lay = QVBoxLayout(box)
+        lay.setSpacing(8)
+        self.recent_placeholder = QLabel("\u041d\u0435\u0442 \u043d\u0435\u0434\u0430\u0432\u043d\u0438\u0445 \u043f\u043e\u0434\u043a\u043b\u044e\u0447\u0435\u043d\u0438\u0439")
+        self.recent_placeholder.setProperty("muted", "true")
+        self.recent_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.recent_placeholder.setMinimumHeight(72)
         self.recent_list = QListWidget()
         self.recent_list.setObjectName("recentConnectionsList")
-        self.recent_list.setMaximumHeight(118)
+        self.recent_list.setMinimumHeight(96)
+        self.recent_list.setMaximumHeight(160)
+        self.recent_list.setVisible(False)
         self.recent_list.itemDoubleClicked.connect(self.connect_recent_item)
-        recent_buttons = QHBoxLayout()
+        lay.addWidget(self.recent_placeholder)
+        lay.addWidget(self.recent_list)
+        btns = QHBoxLayout()
+        btns.setSpacing(8)
         self.quick_connect_button = QPushButton("Quick Connect")
         self.quick_connect_button.clicked.connect(self.quick_connect)
         self.connect_recent_button = self._secondary(QPushButton("Connect selected"))
         self.connect_recent_button.clicked.connect(self.connect_selected_recent)
-        self.clear_history_button = self._secondary(QPushButton("Clear history"))
+        self.clear_history_button = self._secondary(QPushButton("Clear"))
         self.clear_history_button.clicked.connect(self.clear_recent_history)
-        for widget in [self.quick_connect_button, self.connect_recent_button, self.clear_history_button]:
-            recent_buttons.addWidget(widget)
-        recent_box.addWidget(self.recent_list)
-        recent_box.addLayout(recent_buttons)
-        form.addRow("Recent", recent_box)
-        for label, widget in [
-            ("Host", self.host_edit), ("Port", self.port_edit), ("Username", self.user_edit),
-            ("Password", self.password_edit), ("Private key", self.key_edit), ("Key passphrase", self.key_pass_edit),
-            ("Remote command", self.remote_command_edit), ("Session id", self.session_id_edit), ("Screen", self.screen_edit),
-            ("Quality preset", self.quality_preset_combo), ("FPS", self.fps_edit), ("JPEG quality", self.quality_edit), ("Idle timeout", self.idle_timeout_edit),
-            ("Shared folder", self.shared_folder_edit), ("Known hosts", self.known_hosts_edit), ("ProxyJump", self.proxy_jump_edit),
-            ("Clipboard max bytes", self.clipboard_max_edit),
-        ]:
-            form.addRow(label, widget)
-        form.addRow(self.persistent_check)
-        form.addRow(self.clipboard_check)
-        form.addRow(self.reconnect_check)
-        form.addRow(self.verify_host_key_check)
-        box.setMaximumWidth(860)
-        _conn_row = QHBoxLayout()
-        _conn_row.addWidget(box)
-        _conn_row.addStretch(1)
-        session_layout.addLayout(_conn_row)
+        for b in (self.quick_connect_button, self.connect_recent_button, self.clear_history_button):
+            btns.addWidget(b)
+        lay.addLayout(btns)
+        return box
 
-        self.display = RemoteDisplayWidget()
-        self.display.setObjectName("remoteDisplay")
-        self.display.inputMessage.connect(self.send_input_message)
-        self.display.localFilesDropped.connect(self.upload_local_files)
-        session_layout.addWidget(self.display, 1)
-        status_row = QHBoxLayout()
-        self.status = QLabel("● Disconnected")
+    def _build_connection_section(self) -> QGroupBox:
+        box = QGroupBox("\u041f\u043e\u0434\u043a\u043b\u044e\u0447\u0435\u043d\u0438\u0435")
+        form = QFormLayout(box)
+        self._style_form(form)
+        self.host_edit = QLineEdit()
+        self.host_edit.setPlaceholderText("example.com or 10.0.0.5")
+        self.port_edit = QSpinBox(); self.port_edit.setRange(1, 65535); self.port_edit.setValue(22)
+        self.user_edit = QLineEdit()
+        self.password_edit = QLineEdit(); self.password_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self.key_edit = QLineEdit(); self.key_edit.setPlaceholderText("~/.ssh/id_remote_ssh_desktop")
+        self.key_pass_edit = QLineEdit(); self.key_pass_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        for w in (self.host_edit, self.user_edit, self.password_edit, self.key_edit, self.key_pass_edit):
+            w.setMinimumWidth(180)
+        form.addRow("Host", self.host_edit)
+        form.addRow("Port", self.port_edit)
+        form.addRow("Username", self.user_edit)
+        form.addRow("Password", self.password_edit)
+        form.addRow("Private key", self.key_edit)
+        form.addRow("Key passphrase", self.key_pass_edit)
+        return box
+
+    def _build_display_section(self) -> QGroupBox:
+        box = QGroupBox("\u0414\u0438\u0441\u043f\u043b\u0435\u0439")
+        form = QFormLayout(box)
+        self._style_form(form)
+        self.quality_preset_combo = QComboBox()
+        self.quality_preset_combo.setObjectName("qualityPresetCombo")
+        self.quality_preset_combo.addItems([*QUALITY_PRESETS.keys(), "Custom"])
+        self.quality_preset_combo.setCurrentText("WAN")
+        self.quality_preset_combo.currentTextChanged.connect(self.apply_quality_preset)
+        self.fps_edit = QSpinBox(); self.fps_edit.setRange(1, 60); self.fps_edit.setValue(QUALITY_PRESETS["WAN"]["fps"])
+        self.quality_edit = QSpinBox(); self.quality_edit.setRange(20, 95); self.quality_edit.setValue(QUALITY_PRESETS["WAN"]["quality"])
+        self.fps_edit.valueChanged.connect(lambda _=None: self.mark_quality_custom())
+        self.quality_edit.valueChanged.connect(lambda _=None: self.mark_quality_custom())
+        self.screen_edit = QLineEdit("1920x1080")
+        for w in (self.quality_preset_combo, self.screen_edit):
+            w.setMinimumWidth(180)
+        form.addRow("Quality preset", self.quality_preset_combo)
+        form.addRow("FPS", self.fps_edit)
+        form.addRow("JPEG quality", self.quality_edit)
+        form.addRow("Screen", self.screen_edit)
+        return box
+
+    def _build_folder_section(self) -> QGroupBox:
+        box = QGroupBox("\u041f\u0430\u043f\u043a\u0430 \u0438 \u0431\u0443\u0444\u0435\u0440")
+        form = QFormLayout(box)
+        self._style_form(form)
+        self.shared_folder_edit = QLineEdit("~/RemoteShared")
+        self.shared_folder_edit.setMinimumWidth(180)
+        self.clipboard_max_edit = QSpinBox(); self.clipboard_max_edit.setRange(1024, 100_000_000); self.clipboard_max_edit.setValue(1_000_000)
+        form.addRow("Shared folder", self.shared_folder_edit)
+        form.addRow("Clipboard max bytes", self.clipboard_max_edit)
+        return box
+
+    def _build_advanced_section(self) -> QWidget:
+        container, body = self._collapsible("\u0414\u043e\u043f\u043e\u043b\u043d\u0438\u0442\u0435\u043b\u044c\u043d\u043e", expanded=False)
+        form = QFormLayout(body)
+        self._style_form(form)
+        self.remote_command_edit = QPlainTextEdit(DEFAULT_REMOTE_COMMAND)
+        self.remote_command_edit.setObjectName("remoteCommandEdit")
+        self.remote_command_edit.setMinimumHeight(96)
+        self.remote_command_edit.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
+        mono = QFont("monospace"); mono.setStyleHint(QFont.StyleHint.Monospace)
+        self.remote_command_edit.setFont(mono)
+        reset_cmd = self._secondary(QPushButton("\u0421\u0431\u0440\u043e\u0441\u0438\u0442\u044c \u043a \u0441\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u043e\u0439"))
+        reset_cmd.clicked.connect(lambda: self.remote_command_edit.setPlainText(DEFAULT_REMOTE_COMMAND))
+        cmd_box = QVBoxLayout(); cmd_box.setSpacing(6)
+        cmd_box.addWidget(self.remote_command_edit)
+        _rc = QHBoxLayout(); _rc.addStretch(1); _rc.addWidget(reset_cmd)
+        cmd_box.addLayout(_rc)
+        self.session_id_edit = QLineEdit(uuid.uuid4().hex[:12])
+        self.proxy_jump_edit = QLineEdit("")
+        self.proxy_jump_edit.setObjectName("proxyJumpEdit")
+        self.proxy_jump_edit.setPlaceholderText("Optional: bastion alias or user@host")
+        self.known_hosts_edit = QLineEdit("")
+        self.idle_timeout_edit = QSpinBox(); self.idle_timeout_edit.setRange(5, 86400); self.idle_timeout_edit.setValue(300); self.idle_timeout_edit.setSuffix(" s")
+        for w in (self.session_id_edit, self.proxy_jump_edit, self.known_hosts_edit):
+            w.setMinimumWidth(180)
+        form.addRow("Remote command", cmd_box)
+        form.addRow("Session id", self.session_id_edit)
+        form.addRow("ProxyJump", self.proxy_jump_edit)
+        form.addRow("Known hosts", self.known_hosts_edit)
+        form.addRow("Idle timeout", self.idle_timeout_edit)
+        self.persistent_check = QCheckBox("Persistent session")
+        self.clipboard_check = QCheckBox("Sync clipboard"); self.clipboard_check.setChecked(True)
+        self.reconnect_check = QCheckBox("Auto reconnect"); self.reconnect_check.setChecked(True)
+        self.verify_host_key_check = QCheckBox("Don't verify host key (insecure \u2014 disables MITM protection)")
+        self.verify_host_key_check.setObjectName("hostKeyWarning")
+        checks = QVBoxLayout(); checks.setSpacing(8)
+        for c in (self.persistent_check, self.clipboard_check, self.reconnect_check, self.verify_host_key_check):
+            checks.addWidget(c)
+        form.addRow("Options", checks)
+        return container
+
+    # ── Status bar (Desktop tab footer) ─────────────────────────────────
+    def _metric(self, caption: str, value: str):
+        chip = QWidget()
+        chip.setObjectName("metricChip")
+        l = QHBoxLayout(chip)
+        l.setContentsMargins(10, 6, 10, 6)
+        l.setSpacing(6)
+        cap = QLabel(caption)
+        cap.setObjectName("metricCaption")
+        cap.setProperty("muted", "true")
+        val = QLabel(value)
+        val.setObjectName("metricValue")
+        l.addWidget(cap)
+        l.addWidget(val)
+        return chip, val
+
+    def _sep(self) -> QFrame:
+        s = QFrame()
+        s.setObjectName("statusSep")
+        s.setFrameShape(QFrame.Shape.VLine)
+        return s
+
+    def _build_status_bar(self) -> QWidget:
+        bar = QWidget()
+        bar.setObjectName("statusBar")
+        row = QHBoxLayout(bar)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(8)
+        self.status = QLabel("\u25cf Disconnected")
+        self.status.setObjectName("statusChip")
         self.status.setProperty("status", "true")
-        self.connection_label = QLabel("Target — · uptime —")
-        self.connection_label.setProperty("muted", "true")
-        self.stats = QLabel("FPS 0 · ping — · quality —")
-        self.stats.setProperty("muted", "true")
-        status_row.addWidget(self.status, 1)
-        status_row.addWidget(self.connection_label)
-        status_row.addWidget(self.stats)
-        session_layout.addLayout(status_row)
-        self.clipboard = QApplication.clipboard()
-        self.clipboard.dataChanged.connect(self.local_clipboard_changed)
-        self._register_hotkeys()
+        self.status.setProperty("state", "disconnected")
+        row.addWidget(self.status)
+        self._metric_vals = {}
+        for cap in ("Target", "Uptime", "FPS", "Ping", "Quality"):
+            chip, val = self._metric(cap, "\u2014")
+            self._metric_vals[cap] = val
+            row.addWidget(self._sep())
+            row.addWidget(chip)
+        row.addStretch(1)
+        return bar
 
+    # ── Files tab ───────────────────────────────────────────────────────
+    def _build_files_tab(self):
         files_layout = QVBoxLayout(self.files_tab)
-        files_layout.setContentsMargins(14, 14, 14, 14)
+        files_layout.setContentsMargins(16, 16, 16, 16)
         files_layout.setSpacing(12)
         row = QHBoxLayout()
         self.remote_path_edit = QLineEdit("")
@@ -1115,9 +1401,9 @@ class MainWindow(QMainWindow):
         self.up_button.clicked.connect(self.go_up)
         self.mkdir_button = self._secondary(QPushButton("Mkdir"))
         self.mkdir_button.clicked.connect(self.mkdir_remote)
-        self.upload_button = QPushButton("Upload…")
+        self.upload_button = QPushButton("Upload\u2026")
         self.upload_button.clicked.connect(self.upload_file_dialog)
-        self.download_button = self._secondary(QPushButton("Download…"))
+        self.download_button = self._secondary(QPushButton("Download\u2026"))
         self.download_button.clicked.connect(self.download_file_dialog)
         self.cancel_transfer_button = self._secondary(QPushButton("Cancel transfer"))
         self.cancel_transfer_button.clicked.connect(self.cancel_transfers)
@@ -1131,8 +1417,10 @@ class MainWindow(QMainWindow):
         self.progress.setRange(0, 100)
         files_layout.addWidget(self.progress)
 
+    # ── Diagnostics tab ─────────────────────────────────────────────────
+    def _build_diagnostics_tab(self):
         diagnostics_layout = QVBoxLayout(self.diagnostics_tab)
-        diagnostics_layout.setContentsMargins(14, 14, 14, 14)
+        diagnostics_layout.setContentsMargins(16, 16, 16, 16)
         diagnostics_layout.setSpacing(12)
         diagnostics_intro = QLabel("Run a local dependency self-test before connecting or export the report for support.")
         diagnostics_intro.setProperty("muted", "true")
@@ -1140,7 +1428,7 @@ class MainWindow(QMainWindow):
         diagnostics_buttons = QHBoxLayout()
         self.self_test_button = QPushButton("Run self-test")
         self.self_test_button.clicked.connect(self.run_self_test)
-        self.export_self_test_button = self._secondary(QPushButton("Export report…"))
+        self.export_self_test_button = self._secondary(QPushButton("Export report\u2026"))
         self.export_self_test_button.clicked.connect(self.export_self_test_report)
         self.export_self_test_button.setEnabled(False)
         diagnostics_buttons.addWidget(self.self_test_button)
@@ -1153,13 +1441,27 @@ class MainWindow(QMainWindow):
         diagnostics_layout.addWidget(self.diagnostics_output, 1)
         self._last_diagnostic_report = None
 
-        # ── Monitor tab: live graphs + connection log ──────────────────────
+    # ── Monitor tab ─────────────────────────────────────────────────────
+    def _build_monitor_tab(self):
         monitor_layout = QVBoxLayout(self.monitor_tab)
-        monitor_layout.setContentsMargins(14, 14, 14, 14)
+        monitor_layout.setContentsMargins(16, 16, 16, 16)
         monitor_layout.setSpacing(12)
         monitor_intro = QLabel("Live connection metrics and event log.")
         monitor_intro.setProperty("muted", "true")
         monitor_layout.addWidget(monitor_intro)
+        tiles = QHBoxLayout()
+        tiles.setSpacing(12)
+        self._mon_tiles = {}
+        for cap in ("Status", "FPS", "Ping", "Quality", "Uptime"):
+            tile = QGroupBox(cap)
+            tl = QVBoxLayout(tile)
+            val = QLabel("\u2014")
+            val.setObjectName("monitorValue")
+            val.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            tl.addWidget(val)
+            self._mon_tiles[cap] = val
+            tiles.addWidget(tile)
+        monitor_layout.addLayout(tiles)
         self.ping_graph = SparklineWidget("Ping", "ms", "#ffb454")
         self.bw_graph = SparklineWidget("Bandwidth", "KB/s", "#4da3ff")
         monitor_layout.addWidget(self.ping_graph)
@@ -1174,7 +1476,8 @@ class MainWindow(QMainWindow):
         monitor_layout.addLayout(log_header)
         self.connection_log = QTextEdit()
         self.connection_log.setReadOnly(True)
-        self.connection_log.setMaximumBlockCount(500) if hasattr(self.connection_log, "setMaximumBlockCount") else None
+        if hasattr(self.connection_log, "setMaximumBlockCount"):
+            self.connection_log.setMaximumBlockCount(500)
         monitor_layout.addWidget(self.connection_log, 1)
 
     def run_self_test(self):
@@ -1366,46 +1669,54 @@ class MainWindow(QMainWindow):
         self._last_frame_sample = now
         self._last_frame_count = self._frames_rendered
         transport = self.transport
-        quality = getattr(getattr(transport, "config", None), "quality", "—") if transport else "—"
-        # Live network metrics
-        ping_text = "—"
-        bw_text = "—"
-        drop_text = ""
-        dot = "⚪"
-        if transport:
-            bytes_now = getattr(transport, "_bytes_received", 0)
-            bw_kbps = max(bytes_now - self._last_bytes_count, 0) / elapsed / 1024.0
-            self._last_bytes_count = bytes_now
-            if bw_kbps >= 1024:
-                bw_text = f"{bw_kbps / 1024:.1f} MB/s"
-            else:
-                bw_text = f"{bw_kbps:.0f} KB/s"
+        connected = bool(transport and transport.isRunning())
+        fps_text = "\u2014"
+        ping_text = "\u2014"
+        quality_text = "\u2014"
+        if connected:
+            quality = getattr(getattr(transport, "config", None), "quality", None)
+            quality_text = f"{quality}%" if quality is not None else "\u2014"
+            fps_text = f"{fps:.0f}" if self._connection_started_at else "\u2014"
             latency = getattr(transport, "_last_latency_ms", 0)
             if latency:
                 ping_text = f"{latency} ms"
-                # Color-coded connection quality dot
-                dot = "🟢" if latency < 80 else ("🟡" if latency < 180 else "🔴")
-            dropped = getattr(transport, "_dropped_frames", 0)
-            if dropped:
-                drop_text = f" · dropped {dropped}"
-        self.stats.setText(
-            f"{dot} FPS {fps:.1f} · ping {ping_text} · {bw_text} · quality {quality}{drop_text}"
-        )
-        if transport and hasattr(self, "ping_graph"):
-            latency = getattr(transport, "_last_latency_ms", 0)
-            if latency:
-                self.ping_graph.push(latency)
-            bytes_now2 = getattr(transport, "_bytes_received", 0)
-            self.bw_graph.push(max(bytes_now2 - getattr(self, "_graph_last_bytes", 0), 0) / elapsed / 1024.0)
-            self._graph_last_bytes = bytes_now2
-        if hasattr(self, "connection_label"):
-            if self._connection_started_at:
-                uptime = int(time.monotonic() - self._connection_started_at)
-                mins, secs = divmod(uptime, 60)
-                uptime_text = f"{mins}m {secs:02d}s"
-            else:
-                uptime_text = "—"
-            self.connection_label.setText(f"Target {self._connection_label} · uptime {uptime_text}")
+            self._last_bytes_count = getattr(transport, "_bytes_received", 0)
+            if hasattr(self, "ping_graph"):
+                if latency:
+                    self.ping_graph.push(latency)
+                bytes_now2 = getattr(transport, "_bytes_received", 0)
+                self.bw_graph.push(max(bytes_now2 - getattr(self, "_graph_last_bytes", 0), 0) / elapsed / 1024.0)
+                self._graph_last_bytes = bytes_now2
+        if self._connection_started_at:
+            uptime = int(now - self._connection_started_at)
+            mins, secs = divmod(uptime, 60)
+            hrs, mins = divmod(mins, 60)
+            uptime_text = f"{hrs:02d}:{mins:02d}:{secs:02d}" if hrs else f"{mins:02d}:{secs:02d}"
+        else:
+            uptime_text = "\u2014"
+        if connected and self._connection_started_at:
+            state, status_word = "connected", "Connected"
+        elif connected:
+            state, status_word = "connecting", "Connecting"
+        else:
+            state, status_word = "disconnected", "Disconnected"
+        target_text = self._connection_label if (connected and self._connection_label and self._connection_label != "\u2014") else "\u2014"
+        if hasattr(self, "_metric_vals"):
+            self._metric_vals["Target"].setText(target_text)
+            self._metric_vals["Uptime"].setText(uptime_text)
+            self._metric_vals["FPS"].setText(fps_text)
+            self._metric_vals["Ping"].setText(ping_text)
+            self._metric_vals["Quality"].setText(quality_text)
+        if hasattr(self, "_mon_tiles"):
+            self._mon_tiles["Status"].setText(status_word)
+            self._mon_tiles["FPS"].setText(fps_text)
+            self._mon_tiles["Ping"].setText(ping_text)
+            self._mon_tiles["Quality"].setText(quality_text)
+            self._mon_tiles["Uptime"].setText(uptime_text)
+        if hasattr(self, "status") and self.status.property("state") != state:
+            self.status.setProperty("state", state)
+            self.status.style().unpolish(self.status)
+            self.status.style().polish(self.status)
 
     def _load_defaults(self):
         from PySide6.QtCore import QSettings
@@ -1414,7 +1725,7 @@ class MainWindow(QMainWindow):
         self.port_edit.setValue(int(settings.value("port", 22)))
         self.user_edit.setText(settings.value("username", ""))
         self.key_edit.setText(settings.value("key_file", ""))
-        self.remote_command_edit.setText(settings.value("remote_command", self.remote_command_edit.text()))
+        self.remote_command_edit.setPlainText(settings.value("remote_command", self.remote_command_edit.toPlainText()))
         self.shared_folder_edit.setText(settings.value("shared_folder", self.shared_folder_edit.text()))
         self.session_id_edit.setText(settings.value("session_id", self.session_id_edit.text()))
         self.known_hosts_edit.setText(settings.value("known_hosts", ""))
@@ -1427,7 +1738,7 @@ class MainWindow(QMainWindow):
         settings.setValue("port", self.port_edit.value())
         settings.setValue("username", self.user_edit.text())
         settings.setValue("key_file", self.key_edit.text())
-        settings.setValue("remote_command", self.remote_command_edit.text())
+        settings.setValue("remote_command", self.remote_command_edit.toPlainText())
         settings.setValue("shared_folder", self.shared_folder_edit.text())
         settings.setValue("session_id", self.session_id_edit.text())
         settings.setValue("known_hosts", self.known_hosts_edit.text())
@@ -1457,6 +1768,10 @@ class MainWindow(QMainWindow):
             item = QListWidgetItem(connection_label(entry))
             item.setData(qt_user_role(), entry)
             self.recent_list.addItem(item)
+        has_history = bool(self._history)
+        if hasattr(self, "recent_placeholder"):
+            self.recent_placeholder.setVisible(not has_history)
+            self.recent_list.setVisible(has_history)
 
     def _current_profile_name(self) -> str:
         name = self.profile_combo.currentText() if hasattr(self, "profile_combo") else ""
@@ -1558,7 +1873,7 @@ class MainWindow(QMainWindow):
         self.port_edit.setValue(int(profile.get("port", 22) or 22))
         self.user_edit.setText(str(profile.get("username", "")))
         self.key_edit.setText(str(profile.get("key_file", "")))
-        self.remote_command_edit.setText(str(profile.get("remote_command", DEFAULT_REMOTE_COMMAND)))
+        self.remote_command_edit.setPlainText(str(profile.get("remote_command", DEFAULT_REMOTE_COMMAND)))
         self.session_id_edit.setText(str(profile.get("session_id", self.session_id_edit.text())))
         screen = profile.get("screen", [1920, 1080])
         if isinstance(screen, (list, tuple)) and len(screen) == 2:
@@ -1660,7 +1975,7 @@ class MainWindow(QMainWindow):
         return ClientConfig(
             host=self.host_edit.text().strip(), port=self.port_edit.value(), username=self.user_edit.text().strip(),
             password=self.password_edit.text(), key_file=self.key_edit.text().strip(), key_passphrase=self.key_pass_edit.text(),
-            remote_command=self.remote_command_edit.text().strip(), session_id=self.session_id_edit.text().strip() or uuid.uuid4().hex[:12],
+            remote_command=self.remote_command_edit.toPlainText().strip(), session_id=self.session_id_edit.text().strip() or uuid.uuid4().hex[:12],
             screen=(int(screen[0]), int(screen[1])), fps=self.fps_edit.value(), quality=self.quality_edit.value(),
             quality_preset=self.quality_preset_combo.currentText(),
             persistent=self.persistent_check.isChecked(), idle_timeout=self.idle_timeout_edit.value(),
@@ -1694,6 +2009,7 @@ class MainWindow(QMainWindow):
         self.transport.start()
         self._set_status("Connecting…", busy=True)
         self._save_defaults()
+        self._update_action_states(connected=False, connecting=True)
 
     def _show_tofu_dialog(self, host: str, key_type: str, fingerprint: str, callback) -> None:
         """Show a TOFU dialog asking the user to trust an unknown host key."""
@@ -1755,6 +2071,7 @@ class MainWindow(QMainWindow):
     def handle_disconnect(self, message: str):
         self._connection_started_at = 0.0
         self._set_status(message or "Disconnected")
+        self._update_action_states(connected=False)
 
     def handle_session_info(self, info: dict):
         screen = info.get("screen")
@@ -1771,6 +2088,7 @@ class MainWindow(QMainWindow):
         self._connection_label = f"{target} / {info.get('session_id', self.session_id_edit.text().strip() or '—')}"
         self.update_stats_label()
         self._set_status("Connected")
+        self._update_action_states(connected=True)
 
     def send_input_message(self, message: dict):
         if self.transport:

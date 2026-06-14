@@ -577,3 +577,50 @@ include x86_64 + arm64 (linux) + macOS + windows.
 
 ### Next step
 - Re-tag (e.g. v1.0.3) to trigger a clean release build.
+
+---
+
+## UI overhaul — client window redesign (Prompts 1–5)
+
+Branch: `ui-overhaul-prompts-1-5`. All work in `remote_ssh_desktop/client/main.py`
+plus a new headless screenshot harness `scripts/ui_screenshot.py`.
+
+### Done
+- **Prompt 1 — Layout.** Replaced the single tall column on the Desktop tab with a
+  two-panel `QSplitter`: left = scrollable connection panel (`QScrollArea`,
+  min/max width 360–560), right = large `RemoteDisplayWidget` (stretch=1, expanding,
+  min 480×360). Connection fields grouped into `QGroupBox` sections — «Подключение»,
+  «Дисплей», «Папка и буфер» — plus a collapsible «Дополнительно». Field min-widths
+  and `AllNonFixedFieldsGrow` form policy so nothing clips and the window adapts.
+- **Prompt 2 — Toolbar.** Actions grouped with separators
+  (Connection | Window | Capture | Server/keys | Special keys), automatic
+  `QToolBar` overflow extension, transparent expanding spacer pushing the Theme
+  switch right (removes the empty blue artifact). Button states wired:
+  Disconnect/Fullscreen/Screenshot/Record disabled when not connected, Connect/
+  Quick Connect disabled while connecting/connected (`_update_action_states`).
+- **Prompt 3 — Form.** Profiles row collapsed to dropdown + search + a «⋯» menu
+  button (Save/Delete/Import/Export/Import ~/.ssh/config). Recent list now has a
+  proper height and a «Нет недавних подключений» placeholder (no empty blue bar).
+  Remote command is a monospace multiline `QPlainTextEdit` with «Сбросить к
+  стандартной», tucked into the advanced section. Checkboxes unified into one
+  Options block; the host-key warning checkbox is styled as a red accent.
+- **Prompt 4 — Status bar & Monitor.** Footer rebuilt as discrete labelled chips
+  (Status dot + Target · Uptime · FPS · Ping · Quality) with separators and a
+  consistent «—» when no data. Colour-coded status (grey/amber/green via state
+  property). Monitor tab gained big metric tiles + the existing ping/bandwidth
+  sparklines and log.
+- **Prompt 5 — Theme polish.** Extended DARK/LIGHT QSS with consistent control
+  heights, metric chips, collapse headers, profile menu button, monospace command
+  box, disabled states, splitter handle, and host-key warning styling for both
+  themes. Window title version already comes from `version.py` (`__version__`).
+
+### Verification status
+- `python -m py_compile` passes for `main.py` and `scripts/ui_screenshot.py`.
+- Screenshots NOT yet captured here: the build sandbox lacks `libGL`/X libs, so
+  PySide6 can't render. Run locally / in CI:
+  `QT_QPA_PLATFORM=offscreen python scripts/ui_screenshot.py --widths 1100,1400,1920 --theme dark`
+  (and `--theme light`); fall back to `xvfb-run -a …` if offscreen is blank.
+
+### Next
+- Capture the 1100/1400/1920 screenshots (dark + light), inspect for clipping/empty
+  space, and attach final paths here.
