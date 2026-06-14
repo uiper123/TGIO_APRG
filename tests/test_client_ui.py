@@ -18,7 +18,8 @@ def app():
     return instance
 
 
-def test_main_window_constructs_with_modern_controls(app):
+def test_main_window_constructs_with_modern_controls(app, tmp_path, monkeypatch):
+    monkeypatch.setenv("REMOTE_SSH_DESKTOP_PROFILES", str(tmp_path / "profiles.json"))
     window = MainWindow()
     try:
         assert __version__ in window.windowTitle()
@@ -26,6 +27,8 @@ def test_main_window_constructs_with_modern_controls(app):
         assert window.theme_combo.count() == 2
         assert window.status.text().startswith("●")
         assert window.display.objectName() == "remoteDisplay"
+        assert window.profile_combo.objectName() == "profileCombo"
+        assert window.proxy_jump_edit.objectName() == "proxyJumpEdit"
     finally:
         window.close()
 
@@ -82,3 +85,29 @@ def test_put_file_creates_remote_parent_directories(tmp_path):
 
     assert fake_sftp.mkdir_calls == ["/srv/shared/nested", "/srv/shared/nested/deep"]
     assert fake_sftp.open_calls == [("/srv/shared/nested/deep/payload.bin", "wb")]
+
+
+def test_apply_profile_populates_connection_fields(app, tmp_path, monkeypatch):
+    monkeypatch.setenv("REMOTE_SSH_DESKTOP_PROFILES", str(tmp_path / "profiles.json"))
+    window = MainWindow()
+    try:
+        window.apply_profile({
+            "host": "server.example",
+            "port": 2200,
+            "username": "alice",
+            "key_file": "~/.ssh/id_rsd",
+            "screen": [1366, 768],
+            "fps": 12,
+            "quality": 70,
+            "proxy_jump": "bastion",
+        })
+        cfg = window.config()
+        assert cfg.host == "server.example"
+        assert cfg.port == 2200
+        assert cfg.username == "alice"
+        assert cfg.screen == (1366, 768)
+        assert cfg.fps == 12
+        assert cfg.quality == 70
+        assert cfg.proxy_jump == "bastion"
+    finally:
+        window.close()

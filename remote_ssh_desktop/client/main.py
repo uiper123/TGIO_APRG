@@ -55,6 +55,7 @@ from remote_ssh_desktop.common.protocol import (
 )
 from remote_ssh_desktop.crypto.keygen import authorized_keys_line, save_keypair
 from remote_ssh_desktop.version import __version__
+from remote_ssh_desktop.common.profiles import export_profiles, import_profiles, import_ssh_config, load_profiles, save_profiles, validate_profile_name
 
 
 DEFAULT_REMOTE_COMMAND = (
@@ -156,6 +157,7 @@ class ClientConfig:
     reconnect_enabled: bool = True
     reconnect_attempts: int = 5
     reconnect_delay: float = 2.0
+    proxy_jump: str = ""
 
     @property
     def screen_text(self) -> str:
@@ -312,6 +314,8 @@ class TransportThread(QThread):
             kwargs["client_keys"] = [self.config.key_file]
             if self.config.key_passphrase:
                 kwargs["passphrase"] = self.config.key_passphrase
+        if self.config.proxy_jump:
+            kwargs["tunnel"] = self.config.proxy_jump
         self.statusChanged.emit("connecting…")
         self._conn = await asyncssh.connect(**kwargs)
         cmd = self.config.format_remote_command()
@@ -653,6 +657,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(f"Remote SSH Desktop {__version__}")
         self.transport: TransportThread | None = None
         self._tasks: list[QThread] = []
+        self._profiles: dict[str, dict[str, Any]] = {}
         self._clipboard_from_remote = False
         self._last_remote_clipboard = ""
         self._remote_rel = ""
@@ -662,6 +667,7 @@ class MainWindow(QMainWindow):
         self._last_frame_count = 0
         self._build_ui()
         self._load_defaults()
+        self._load_profiles()
         self._stats_timer = QTimer(self)
         self._stats_timer.timeout.connect(self.update_stats_label)
         self._stats_timer.start(1000)
@@ -725,6 +731,9 @@ class MainWindow(QMainWindow):
         self.screen_edit = QLineEdit("1920x1080")
         self.shared_folder_edit = QLineEdit("~/RemoteShared")
         self.known_hosts_edit = QLineEdit("")
+        self.proxy_jump_edit = QLineEdit("")
+        self.proxy_jump_edit.setPlaceholderText("Optional: bastion host alias or user@host")
+        self.proxy_jump_edit.setObjectName("proxyJumpEdit")
         self.fps_edit = QSpinBox(); self.fps_edit.setRange(1, 60); self.fps_edit.setValue(18)
         self.quality_edit = QSpinBox(); self.quality_edit.setRange(20, 95); self.quality_edit.setValue(80)
         self.idle_timeout_edit = QSpinBox(); self.idle_timeout_edit.setRange(5, 86400); self.idle_timeout_edit.setValue(300)
@@ -734,12 +743,33 @@ class MainWindow(QMainWindow):
         self.clipboard_check.setChecked(True)
         self.reconnect_check = QCheckBox("Auto reconnect")
         self.reconnect_check.setChecked(True)
+        self.profile_combo = QComboBox()
+        self.profile_combo.setObjectName("profileCombo")
+        self.profile_combo.setEditable(False)
+        self.profile_combo.currentTextChanged.connect(self.load_selected_profile)
+        self.profile_search_edit = QLineEdit()
+        self.profile_search_edit.setPlaceholderText("Search profiles")
+        self.profile_search_edit.textChanged.connect(self.refresh_profile_combo)
+        profile_row = QHBoxLayout()
+        self.save_profile_button = self._secondary(QPushButton("Save profile"))
+        self.save_profile_button.clicked.connect(self.save_current_profile)
+        self.delete_profile_button = self._secondary(QPushButton("Delete"))
+        self.delete_profile_button.clicked.connect(self.delete_current_profile)
+        self.import_profile_button = self._secondary(QPushButton("Import JSON"))
+        self.import_profile_button.clicked.connect(self.import_profiles_dialog)
+        self.export_profile_button = self._secondary(QPushButton("Export JSON"))
+        self.export_profile_button.clicked.connect(self.export_profiles_dialog)
+        self.ssh_config_button = self._secondary(QPushButton("Import ~/.ssh/config"))
+        self.ssh_config_button.clicked.connect(self.import_ssh_config_dialog)
+        for widget in [self.profile_combo, self.profile_search_edit, self.save_profile_button, self.delete_profile_button, self.import_profile_button, self.export_profile_button, self.ssh_config_button]:
+            profile_row.addWidget(widget)
+        form.addRow("Profiles", profile_row)
         for label, widget in [
             ("Host", self.host_edit), ("Port", self.port_edit), ("Username", self.user_edit),
             ("Password", self.password_edit), ("Private key", self.key_edit), ("Key passphrase", self.key_pass_edit),
             ("Remote command", self.remote_command_edit), ("Session id", self.session_id_edit), ("Screen", self.screen_edit),
             ("FPS", self.fps_edit), ("JPEG quality", self.quality_edit), ("Idle timeout", self.idle_timeout_edit),
-            ("Shared folder", self.shared_folder_edit), ("Known hosts", self.known_hosts_edit),
+            ("Shared folder", self.shared_folder_edit), ("Known hosts", self.known_hosts_edit), ("ProxyJump", self.proxy_jump_edit),
             ("Clipboard max bytes", self.clipboard_max_edit),
         ]:
             form.addRow(label, widget)
@@ -849,6 +879,144 @@ class MainWindow(QMainWindow):
         settings.setValue("session_id", self.session_id_edit.text())
         settings.setValue("known_hosts", self.known_hosts_edit.text())
 
+    def _load_profiles(self):
+        try:
+            self._profiles = load_profiles()
+        except Exception as exc:
+            self._profiles = {}
+            self._set_status(f"Profiles unavailable: {exc}")
+        self.refresh_profile_combo()
+
+    def refresh_profile_combo(self):
+        if not hasattr(self, "profile_combo"):
+            return
+        current = self.profile_combo.currentText()
+        query = self.profile_search_edit.text().strip().lower() if hasattr(self, "profile_search_edit") else ""
+        names = [name for name in sorted(self._profiles) if not query or query in name.lower() or query in str(self._profiles[name].get("host", "")).lower()]
+        self.profile_combo.blockSignals(True)
+        self.profile_combo.clear()
+        self.profile_combo.addItem("Select profile…")
+        self.profile_combo.addItems(names)
+        if current in names:
+            self.profile_combo.setCurrentText(current)
+        self.profile_combo.blockSignals(False)
+
+    def current_profile_payload(self) -> dict[str, Any]:
+        cfg = self.config()
+        return {
+            "host": cfg.host,
+            "port": cfg.port,
+            "username": cfg.username,
+            "key_file": cfg.key_file,
+            "remote_command": cfg.remote_command,
+            "session_id": cfg.session_id,
+            "screen": list(cfg.screen),
+            "fps": cfg.fps,
+            "quality": cfg.quality,
+            "persistent": cfg.persistent,
+            "idle_timeout": cfg.idle_timeout,
+            "shared_folder": cfg.shared_folder,
+            "known_hosts": cfg.known_hosts,
+            "clipboard_enabled": cfg.clipboard_enabled,
+            "clipboard_max_bytes": cfg.clipboard_max_bytes,
+            "reconnect_enabled": cfg.reconnect_enabled,
+            "reconnect_attempts": cfg.reconnect_attempts,
+            "reconnect_delay": cfg.reconnect_delay,
+            "proxy_jump": cfg.proxy_jump,
+        }
+
+    def apply_profile(self, profile: dict[str, Any]) -> None:
+        self.host_edit.setText(str(profile.get("host", "")))
+        self.port_edit.setValue(int(profile.get("port", 22) or 22))
+        self.user_edit.setText(str(profile.get("username", "")))
+        self.key_edit.setText(str(profile.get("key_file", "")))
+        self.remote_command_edit.setText(str(profile.get("remote_command", DEFAULT_REMOTE_COMMAND)))
+        self.session_id_edit.setText(str(profile.get("session_id", self.session_id_edit.text())))
+        screen = profile.get("screen", [1920, 1080])
+        if isinstance(screen, (list, tuple)) and len(screen) == 2:
+            self.screen_edit.setText(f"{int(screen[0])}x{int(screen[1])}")
+        elif isinstance(screen, str):
+            self.screen_edit.setText(screen)
+        self.fps_edit.setValue(int(profile.get("fps", 18) or 18))
+        self.quality_edit.setValue(int(profile.get("quality", 80) or 80))
+        self.idle_timeout_edit.setValue(int(profile.get("idle_timeout", 300) or 300))
+        self.shared_folder_edit.setText(str(profile.get("shared_folder", "~/RemoteShared")))
+        self.known_hosts_edit.setText(str(profile.get("known_hosts", "")))
+        self.clipboard_max_edit.setValue(int(profile.get("clipboard_max_bytes", 1_000_000) or 1_000_000))
+        self.persistent_check.setChecked(bool(profile.get("persistent", False)))
+        self.clipboard_check.setChecked(bool(profile.get("clipboard_enabled", True)))
+        self.reconnect_check.setChecked(bool(profile.get("reconnect_enabled", True)))
+        self.proxy_jump_edit.setText(str(profile.get("proxy_jump", "")))
+        self._set_status("Profile loaded")
+
+    def load_selected_profile(self, name: str) -> None:
+        if name in self._profiles:
+            self.apply_profile(self._profiles[name])
+
+    def save_current_profile(self):
+        default = self.profile_combo.currentText() if self.profile_combo.currentText() in self._profiles else self.host_edit.text().strip()
+        name, ok = QInputDialog.getText(self, "Save connection profile", "Profile name", text=default)
+        if not ok:
+            return
+        try:
+            clean = validate_profile_name(name)
+            self._profiles[clean] = self.current_profile_payload()
+            path = save_profiles(self._profiles)
+        except Exception as exc:
+            QMessageBox.critical(self, "Profiles", str(exc))
+            return
+        self.refresh_profile_combo()
+        self.profile_combo.setCurrentText(clean)
+        self._set_status(f"Profile saved: {path}")
+
+    def delete_current_profile(self):
+        name = self.profile_combo.currentText()
+        if name not in self._profiles:
+            return
+        if QMessageBox.question(self, "Delete profile", f"Delete profile '{name}'?") != QMessageBox.StandardButton.Yes:
+            return
+        self._profiles.pop(name, None)
+        save_profiles(self._profiles)
+        self.refresh_profile_combo()
+        self._set_status("Profile deleted")
+
+    def import_profiles_dialog(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Import profiles JSON", "", "JSON files (*.json);;All files (*)")
+        if not path:
+            return
+        try:
+            self._profiles = import_profiles(path)
+        except Exception as exc:
+            QMessageBox.critical(self, "Profiles", str(exc))
+            return
+        self.refresh_profile_combo()
+        self._set_status("Profiles imported")
+
+    def export_profiles_dialog(self):
+        path, _ = QFileDialog.getSaveFileName(self, "Export profiles JSON", "remote-ssh-desktop-profiles.json", "JSON files (*.json);;All files (*)")
+        if not path:
+            return
+        try:
+            export_profiles(self._profiles, path)
+        except Exception as exc:
+            QMessageBox.critical(self, "Profiles", str(exc))
+            return
+        self._set_status("Profiles exported")
+
+    def import_ssh_config_dialog(self):
+        try:
+            imported = import_ssh_config()
+            if not imported:
+                self._set_status("No importable SSH config hosts found")
+                return
+            self._profiles.update(imported)
+            save_profiles(self._profiles)
+        except Exception as exc:
+            QMessageBox.critical(self, "Profiles", str(exc))
+            return
+        self.refresh_profile_combo()
+        self._set_status(f"Imported {len(imported)} SSH config profile(s)")
+
     def config(self) -> ClientConfig:
         screen = tuple(int(part) for part in self.screen_edit.text().lower().replace(" ", "").split("x", 1))
         return ClientConfig(
@@ -860,6 +1028,7 @@ class MainWindow(QMainWindow):
             shared_folder=self.shared_folder_edit.text().strip(), known_hosts=self.known_hosts_edit.text().strip(),
             clipboard_enabled=self.clipboard_check.isChecked(), clipboard_max_bytes=self.clipboard_max_edit.value(),
             reconnect_enabled=self.reconnect_check.isChecked(),
+            proxy_jump=self.proxy_jump_edit.text().strip(),
         )
 
     def connect_session(self):
@@ -1034,14 +1203,24 @@ def configure_qt_platform() -> None:
 
 
 def main() -> None:
+    import argparse
     import sys
-    if any(arg in {"-h", "--help"} for arg in sys.argv[1:]):
-        print("Remote SSH Desktop client\n\nRun without arguments to start the Qt GUI. Configure the SSH host, user, key/password, shared folder, clipboard, and quality options inside the window.")
-        return
+    parser = argparse.ArgumentParser(description="Remote SSH Desktop client")
+    parser.add_argument("--profile", default="", help="load a saved connection profile by name")
+    parser.add_argument("--connect", action="store_true", help="connect immediately after loading --profile")
+    args = parser.parse_args()
     configure_qt_platform()
-    app = QApplication(sys.argv)
+    app = QApplication(sys.argv[:1])
     apply_theme(app, "dark")
     window = MainWindow()
+    if args.profile:
+        if args.profile in window._profiles:
+            window.profile_combo.setCurrentText(args.profile)
+            window.apply_profile(window._profiles[args.profile])
+            if args.connect:
+                QTimer.singleShot(0, window.connect_session)
+        else:
+            window._set_status(f"Profile not found: {args.profile}")
     window.resize(1400, 1000)
     window.show()
     raise SystemExit(app.exec())

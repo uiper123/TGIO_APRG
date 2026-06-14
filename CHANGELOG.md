@@ -17,6 +17,10 @@ project adheres to [Semantic Versioning](https://semver.org/).
 - SFTP uploads now create missing remote parent directories before resuming/writing files.
 - Regression coverage for recursive SFTP parent-directory creation.
 - Xvfb e2e coverage for persistent session list/resume/stop and non-persistent idle cleanup.
+- Connection profile manager with searchable saved profiles, JSON import/export, and non-secret profile storage.
+- `~/.ssh/config` import for simple `Host` entries with `HostName`, `User`, `Port`, `IdentityFile`, and `ProxyJump`.
+- ProxyJump/bastion support via the client `ProxyJump` field.
+- Client CLI `--profile NAME` and `--connect` for shortcut/script launches.
 
 ### Changed
 - Server proxy and clipboard loops now log disconnect/clipboard failures instead of silently swallowing them.

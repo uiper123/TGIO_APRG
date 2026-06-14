@@ -86,6 +86,31 @@ python -m remote_ssh_desktop.server.main --proxy --session-id {session_id} --scr
 
 That command runs over SSH as the authenticated system user. Therefore the virtual desktop process, home directory, permissions, and shared folder belong to that SSH user. Each connection gets its own virtual X11 display unless you reconnect to a persistent session id.
 
+## Connection profiles
+
+The client includes a connection profile manager in the Connection panel:
+
+- save multiple host profiles without storing passwords or key passphrases
+- search and load profiles from the dropdown
+- import/export profiles as JSON
+- import simple `~/.ssh/config` `Host` entries, including `HostName`, `User`, `Port`, `IdentityFile`, and `ProxyJump`
+
+Profiles are stored by default at `~/.config/remote-ssh-desktop/profiles.json`. Override this location for tests or portable runs with `REMOTE_SSH_DESKTOP_PROFILES=/path/to/profiles.json`.
+
+ProxyJump/bastion hosts are passed through AsyncSSH's tunnel support. Put the bastion alias or `user@host` value in the `ProxyJump` field.
+
+Launch the client with a profile preloaded:
+
+```bash
+python -m remote_ssh_desktop.client.main --profile prod
+```
+
+To connect immediately after loading the profile:
+
+```bash
+python -m remote_ssh_desktop.client.main --profile prod --connect
+```
+
 ## Server CLI
 
 The server module is normally launched by the client over SSH, but it can be managed manually:

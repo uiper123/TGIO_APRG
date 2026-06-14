@@ -69,3 +69,19 @@
 
 ### Next step
 - Continue with the next live-verification gap: clipboard/input/file-transfer e2e over a real local SSH server, or, if SSH daemon setup is unavailable, add isolated tests for clipboard anti-loop/UTF-8/limit behavior and transfer resume/cancel edge cases.
+
+## Cycle 3 completed — 2026-06-14
+
+### Done
+- Added a real connection profile manager: searchable profile dropdown, Save/Delete, JSON import/export, and non-secret storage at `~/.config/remote-ssh-desktop/profiles.json` or `REMOTE_SSH_DESKTOP_PROFILES`.
+- Added `~/.ssh/config` import for simple `Host` blocks (`HostName`, `User`, `Port`, `IdentityFile`, `ProxyJump`) while ignoring wildcard hosts.
+- Added ProxyJump/bastion support through AsyncSSH tunnel configuration and a dedicated GUI field.
+- Added client CLI shortcuts: `--profile NAME` preloads a saved profile; `--profile NAME --connect` starts connecting after the Qt event loop opens.
+- Updated README and CHANGELOG.
+
+### Verified
+- `python -m pytest -q tests/test_profiles.py tests/test_client_ui.py -x --timeout=60` → `8 passed`.
+- `python -m pytest -q -x --timeout=60` → `16 passed`.
+
+### Next step
+- Continue with Quick Connect/history/recent profiles, or first-run diagnostics/self-test for local/server dependencies (`Xvfb`, `xauth`, `xclip`, `xterm`, Qt runtime) with clear UI feedback.
