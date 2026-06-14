@@ -61,6 +61,13 @@ from remote_ssh_desktop.common.profiles import export_profiles, import_profiles,
 from remote_ssh_desktop.common.history import clear_history, connection_label, latest_history, load_history, record_connection
 
 
+QUALITY_PRESETS = {
+    "LAN": {"fps": 30, "quality": 90},
+    "WAN": {"fps": 18, "quality": 75},
+    "Mobile": {"fps": 10, "quality": 55},
+}
+
+
 DEFAULT_REMOTE_COMMAND = (
     "python -m remote_ssh_desktop.server.main --proxy --session-id {session_id} "
     "--screen {screen} --fps {fps} --quality {quality} --idle-timeout {idle_timeout} "
@@ -161,6 +168,7 @@ class ClientConfig:
     reconnect_attempts: int = 5
     reconnect_delay: float = 2.0
     proxy_jump: str = ""
+    quality_preset: str = "WAN"
 
     @property
     def screen_text(self) -> str:
@@ -302,6 +310,11 @@ class TransportThread(QThread):
         latency_ms = int((time.monotonic() - sent_at) * 1000)
         self.submit_frame(FRAME_STATS, {"t": "stats", "latency_ms": latency_ms, "dropped": self._dropped_frames})
         self.statusChanged.emit(f"connected — {latency_ms} ms")
+
+    def update_quality(self, fps: int, quality: int) -> None:
+        self.config.fps = max(1, min(60, int(fps)))
+        self.config.quality = max(20, min(95, int(quality)))
+        self.submit_frame(FRAME_CONTROL, {"t": "set_quality", "fps": self.config.fps, "quality": self.config.quality})
 
     async def _connect_once(self) -> None:
         self._submit_queue = asyncio.Queue(maxsize=128)
@@ -745,8 +758,15 @@ class MainWindow(QMainWindow):
         self.proxy_jump_edit = QLineEdit("")
         self.proxy_jump_edit.setPlaceholderText("Optional: bastion host alias or user@host")
         self.proxy_jump_edit.setObjectName("proxyJumpEdit")
-        self.fps_edit = QSpinBox(); self.fps_edit.setRange(1, 60); self.fps_edit.setValue(18)
-        self.quality_edit = QSpinBox(); self.quality_edit.setRange(20, 95); self.quality_edit.setValue(80)
+        self.quality_preset_combo = QComboBox()
+        self.quality_preset_combo.addItems([*QUALITY_PRESETS.keys(), "Custom"])
+        self.quality_preset_combo.setCurrentText("WAN")
+        self.quality_preset_combo.currentTextChanged.connect(self.apply_quality_preset)
+        self.quality_preset_combo.setObjectName("qualityPresetCombo")
+        self.fps_edit = QSpinBox(); self.fps_edit.setRange(1, 60); self.fps_edit.setValue(QUALITY_PRESETS["WAN"]["fps"])
+        self.quality_edit = QSpinBox(); self.quality_edit.setRange(20, 95); self.quality_edit.setValue(QUALITY_PRESETS["WAN"]["quality"])
+        self.fps_edit.valueChanged.connect(lambda _=None: self.mark_quality_custom())
+        self.quality_edit.valueChanged.connect(lambda _=None: self.mark_quality_custom())
         self.idle_timeout_edit = QSpinBox(); self.idle_timeout_edit.setRange(5, 86400); self.idle_timeout_edit.setValue(300)
         self.clipboard_max_edit = QSpinBox(); self.clipboard_max_edit.setRange(1024, 100_000_000); self.clipboard_max_edit.setValue(1_000_000)
         self.persistent_check = QCheckBox("Persistent session")
@@ -796,7 +816,7 @@ class MainWindow(QMainWindow):
             ("Host", self.host_edit), ("Port", self.port_edit), ("Username", self.user_edit),
             ("Password", self.password_edit), ("Private key", self.key_edit), ("Key passphrase", self.key_pass_edit),
             ("Remote command", self.remote_command_edit), ("Session id", self.session_id_edit), ("Screen", self.screen_edit),
-            ("FPS", self.fps_edit), ("JPEG quality", self.quality_edit), ("Idle timeout", self.idle_timeout_edit),
+            ("Quality preset", self.quality_preset_combo), ("FPS", self.fps_edit), ("JPEG quality", self.quality_edit), ("Idle timeout", self.idle_timeout_edit),
             ("Shared folder", self.shared_folder_edit), ("Known hosts", self.known_hosts_edit), ("ProxyJump", self.proxy_jump_edit),
             ("Clipboard max bytes", self.clipboard_max_edit),
         ]:
@@ -892,6 +912,32 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Self-test", str(exc))
             return
         self._set_status(f"Self-test report saved: {saved}")
+
+    def apply_quality_preset(self, name: str) -> None:
+        preset = QUALITY_PRESETS.get(name)
+        if not preset:
+            return
+        self.fps_edit.blockSignals(True)
+        self.quality_edit.blockSignals(True)
+        self.fps_edit.setValue(preset["fps"])
+        self.quality_edit.setValue(preset["quality"])
+        self.fps_edit.blockSignals(False)
+        self.quality_edit.blockSignals(False)
+        self.send_quality_update()
+        self._set_status(f"Quality preset: {name}")
+
+    def mark_quality_custom(self) -> None:
+        if hasattr(self, "quality_preset_combo"):
+            preset = QUALITY_PRESETS.get(self.quality_preset_combo.currentText())
+            if not preset or preset["fps"] != self.fps_edit.value() or preset["quality"] != self.quality_edit.value():
+                self.quality_preset_combo.blockSignals(True)
+                self.quality_preset_combo.setCurrentText("Custom")
+                self.quality_preset_combo.blockSignals(False)
+        self.send_quality_update()
+
+    def send_quality_update(self) -> None:
+        if self.transport and self.transport.isRunning():
+            self.transport.update_quality(self.fps_edit.value(), self.quality_edit.value())
 
     def validate_config(self) -> bool:
         errors: list[str] = []
@@ -1057,6 +1103,7 @@ class MainWindow(QMainWindow):
             "screen": list(cfg.screen),
             "fps": cfg.fps,
             "quality": cfg.quality,
+            "quality_preset": cfg.quality_preset,
             "persistent": cfg.persistent,
             "idle_timeout": cfg.idle_timeout,
             "shared_folder": cfg.shared_folder,
@@ -1081,8 +1128,16 @@ class MainWindow(QMainWindow):
             self.screen_edit.setText(f"{int(screen[0])}x{int(screen[1])}")
         elif isinstance(screen, str):
             self.screen_edit.setText(screen)
-        self.fps_edit.setValue(int(profile.get("fps", 18) or 18))
-        self.quality_edit.setValue(int(profile.get("quality", 80) or 80))
+        preset = str(profile.get("quality_preset", "Custom"))
+        self.quality_preset_combo.blockSignals(True)
+        self.fps_edit.blockSignals(True)
+        self.quality_edit.blockSignals(True)
+        self.quality_preset_combo.setCurrentText(preset if preset in QUALITY_PRESETS else "Custom")
+        self.fps_edit.setValue(int(profile.get("fps", QUALITY_PRESETS["WAN"]["fps"]) or QUALITY_PRESETS["WAN"]["fps"]))
+        self.quality_edit.setValue(int(profile.get("quality", QUALITY_PRESETS["WAN"]["quality"]) or QUALITY_PRESETS["WAN"]["quality"]))
+        self.fps_edit.blockSignals(False)
+        self.quality_edit.blockSignals(False)
+        self.quality_preset_combo.blockSignals(False)
         self.idle_timeout_edit.setValue(int(profile.get("idle_timeout", 300) or 300))
         self.shared_folder_edit.setText(str(profile.get("shared_folder", "~/RemoteShared")))
         self.known_hosts_edit.setText(str(profile.get("known_hosts", "")))
@@ -1169,6 +1224,7 @@ class MainWindow(QMainWindow):
             password=self.password_edit.text(), key_file=self.key_edit.text().strip(), key_passphrase=self.key_pass_edit.text(),
             remote_command=self.remote_command_edit.text().strip(), session_id=self.session_id_edit.text().strip() or uuid.uuid4().hex[:12],
             screen=(int(screen[0]), int(screen[1])), fps=self.fps_edit.value(), quality=self.quality_edit.value(),
+            quality_preset=self.quality_preset_combo.currentText(),
             persistent=self.persistent_check.isChecked(), idle_timeout=self.idle_timeout_edit.value(),
             shared_folder=self.shared_folder_edit.text().strip(), known_hosts=self.known_hosts_edit.text().strip(),
             clipboard_enabled=self.clipboard_check.isChecked(), clipboard_max_bytes=self.clipboard_max_edit.value(),

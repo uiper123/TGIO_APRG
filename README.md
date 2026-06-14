@@ -122,6 +122,13 @@ python -m remote_ssh_desktop.client.main --last
 python -m remote_ssh_desktop.client.main --recent
 ```
 
+The Desktop tab also has a **Quality preset** selector:
+
+- **LAN** — 30 FPS / JPEG 90 for fast local networks
+- **WAN** — 18 FPS / JPEG 75 balanced default
+- **Mobile** — 10 FPS / JPEG 55 for slow or metered connections
+- Any manual FPS/JPEG change marks the profile as **Custom** and is saved with the profile/history.
+
 ## Self-test diagnostics
 
 Before connecting, run the dependency self-test to catch missing local/server prerequisites early:

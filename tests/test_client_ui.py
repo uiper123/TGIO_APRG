@@ -103,8 +103,9 @@ def test_apply_profile_populates_connection_fields(app, tmp_path, monkeypatch):
             "username": "alice",
             "key_file": "~/.ssh/id_rsd",
             "screen": [1366, 768],
-            "fps": 12,
-            "quality": 70,
+            "fps": 10,
+            "quality": 55,
+            "quality_preset": "Mobile",
             "proxy_jump": "bastion",
         })
         cfg = window.config()
@@ -112,8 +113,9 @@ def test_apply_profile_populates_connection_fields(app, tmp_path, monkeypatch):
         assert cfg.port == 2200
         assert cfg.username == "alice"
         assert cfg.screen == (1366, 768)
-        assert cfg.fps == 12
-        assert cfg.quality == 70
+        assert cfg.fps == 10
+        assert cfg.quality == 55
+        assert cfg.quality_preset == "Mobile"
         assert cfg.proxy_jump == "bastion"
     finally:
         window.close()
@@ -154,5 +156,19 @@ def test_self_test_ui_runs_and_exports(app, tmp_path, monkeypatch):
         window.run_self_test()
         assert "Remote SSH Desktop self-test" in window.diagnostics_output.toPlainText()
         assert window.export_self_test_button.isEnabled()
+    finally:
+        window.close()
+
+
+def test_quality_presets_apply_and_custom_changes(app, tmp_path, monkeypatch):
+    monkeypatch.setenv("REMOTE_SSH_DESKTOP_PROFILES", str(tmp_path / "profiles.json"))
+    monkeypatch.setenv("REMOTE_SSH_DESKTOP_HISTORY", str(tmp_path / "history.json"))
+    window = MainWindow()
+    try:
+        window.quality_preset_combo.setCurrentText("LAN")
+        assert window.fps_edit.value() == 30
+        assert window.quality_edit.value() == 90
+        window.quality_edit.setValue(88)
+        assert window.quality_preset_combo.currentText() == "Custom"
     finally:
         window.close()

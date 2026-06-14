@@ -17,6 +17,7 @@ PROFILE_FIELDS = {
     "screen",
     "fps",
     "quality",
+    "quality_preset",
     "persistent",
     "idle_timeout",
     "shared_folder",

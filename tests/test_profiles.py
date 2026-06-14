@@ -23,6 +23,7 @@ def test_profiles_roundtrip_sanitizes_sensitive_fields(tmp_path):
             "key_passphrase": "hidden",
             "screen": "1280x720",
             "persistent": "yes",
+            "quality_preset": "Mobile",
             "proxy_jump": "bastion",
             "unknown": "ignored",
         }
@@ -35,6 +36,7 @@ def test_profiles_roundtrip_sanitizes_sensitive_fields(tmp_path):
     assert saved["port"] == 2222
     assert saved["screen"] == [1280, 720]
     assert saved["proxy_jump"] == "bastion"
+    assert saved["quality_preset"] == "Mobile"
     assert "password" not in saved
     assert "key_passphrase" not in saved
     assert "unknown" not in saved

@@ -140,4 +140,20 @@
 - Post-test process scan for project `remote_ssh_desktop`, Xvfb, xterm, and test sshd → no project leftovers.
 
 ### Next step
-- Continue with quality presets LAN/WAN/Mobile wired into UI/profile/remote `set_quality`, tests for preset values, and documentation updates.
+- Continue down backlog with UX/product features: quality presets (LAN/WAN/Mobile), multi-session tabs/windows, richer file-manager actions, then repeat full tests + commit + push.
+
+## Cycle 7 completed — 2026-06-14
+
+### Done
+- Added client Quality preset selector with `LAN`, `WAN`, `Mobile`, and `Custom`.
+- `LAN` maps to 30 FPS / JPEG 90, `WAN` to 18 FPS / JPEG 75, and `Mobile` to 10 FPS / JPEG 55.
+- Manual FPS/JPEG edits switch the selector to `Custom`.
+- Quality preset now persists through profiles/history and current config payloads.
+- Live preset/FPS/JPEG changes send `set_quality` control frames to the connected server.
+- Updated README and CHANGELOG.
+
+### Verified
+- `QT_QPA_PLATFORM=offscreen timeout 120 python -m pytest -q tests/test_profiles.py tests/test_client_ui.py -x --timeout=60` → `11 passed`.
+
+### Next step
+- Run full suite, commit, push, then continue with multi-session UI tabs/windows or richer file-manager actions.
