@@ -34,6 +34,7 @@ def test_main_window_constructs_with_modern_controls(app, tmp_path, monkeypatch)
         assert window.proxy_jump_edit.objectName() == "proxyJumpEdit"
         assert window.recent_list.objectName() == "recentConnectionsList"
         assert window.quick_connect_button.text() == "Quick Connect"
+        assert window.connection_label.text() == "Target — · uptime —"
         assert window.self_test_button.text() == "Run self-test"
         assert window.diagnostics_output.toPlainText().startswith("Self-test has not been run")
     finally:
@@ -191,5 +192,21 @@ def test_open_new_window_uses_current_profile(app, tmp_path, monkeypatch):
         assert args[args.index("--profile") + 1] == "prod"
         assert kwargs["close_fds"] is True
         assert "New client window opened" in window.status.text()
+    finally:
+        window.close()
+
+
+def test_connection_label_updates_from_session_info(app, tmp_path, monkeypatch):
+    monkeypatch.setenv("REMOTE_SSH_DESKTOP_PROFILES", str(tmp_path / "profiles.json"))
+    monkeypatch.setenv("REMOTE_SSH_DESKTOP_HISTORY", str(tmp_path / "history.json"))
+    window = MainWindow()
+    try:
+        window.host_edit.setText("host.example")
+        window.port_edit.setValue(2200)
+        window.user_edit.setText("alice")
+        window.session_id_edit.setText("sid123")
+        window.handle_session_info({"session_id": "sid123", "screen": [800, 600], "shared_folder": "/tmp/shared"})
+        assert "alice@host.example:2200 / sid123" in window.connection_label.text()
+        assert "uptime" in window.connection_label.text()
     finally:
         window.close()

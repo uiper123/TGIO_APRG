@@ -686,6 +686,9 @@ class MainWindow(QMainWindow):
         self._frames_rendered = 0
         self._last_frame_sample = time.monotonic()
         self._last_frame_count = 0
+        self._connection_started_at = 0.0
+        self._connection_label = "—"
+        self._child_windows: list[MainWindow] = []
         self._build_ui()
         self._load_defaults()
         self._load_profiles()
@@ -837,9 +840,12 @@ class MainWindow(QMainWindow):
         status_row = QHBoxLayout()
         self.status = QLabel("● Disconnected")
         self.status.setProperty("status", "true")
+        self.connection_label = QLabel("Target — · uptime —")
+        self.connection_label.setProperty("muted", "true")
         self.stats = QLabel("FPS 0 · ping — · quality —")
         self.stats.setProperty("muted", "true")
         status_row.addWidget(self.status, 1)
+        status_row.addWidget(self.connection_label)
         status_row.addWidget(self.stats)
         session_layout.addLayout(status_row)
         self.clipboard = QApplication.clipboard()
@@ -974,6 +980,14 @@ class MainWindow(QMainWindow):
         transport = self.transport
         quality = getattr(getattr(transport, "config", None), "quality", "—") if transport else "—"
         self.stats.setText(f"FPS {fps:.1f} · quality {quality} · session {self.session_id_edit.text().strip() or '—'}")
+        if hasattr(self, "connection_label"):
+            if self._connection_started_at:
+                uptime = int(time.monotonic() - self._connection_started_at)
+                mins, secs = divmod(uptime, 60)
+                uptime_text = f"{mins}m {secs:02d}s"
+            else:
+                uptime_text = "—"
+            self.connection_label.setText(f"Target {self._connection_label} · uptime {uptime_text}")
 
     def _load_defaults(self):
         from PySide6.QtCore import QSettings
@@ -1242,6 +1256,8 @@ class MainWindow(QMainWindow):
             return
         cfg = self.config()
         self.session_id_edit.setText(cfg.session_id)
+        self._connection_started_at = 0.0
+        self._connection_label = f"{cfg.username}@{cfg.host}:{cfg.port}" if cfg.username else f"{cfg.host}:{cfg.port}"
         self._pending_history_profile = self.current_profile_payload()
         self._pending_history_name = self._current_profile_name()
         self.transport = TransportThread(cfg)
@@ -1284,6 +1300,7 @@ class MainWindow(QMainWindow):
         self.display.setFrame(jpeg_bytes)
 
     def handle_disconnect(self, message: str):
+        self._connection_started_at = 0.0
         self._set_status(message or "Disconnected")
 
     def handle_session_info(self, info: dict):
@@ -1295,6 +1312,11 @@ class MainWindow(QMainWindow):
             self._remote_root = str(folder)
         self.refresh_files()
         self._remember_successful_connection()
+        if not self._connection_started_at:
+            self._connection_started_at = time.monotonic()
+        target = f"{self.user_edit.text().strip()}@{self.host_edit.text().strip()}:{self.port_edit.value()}" if self.user_edit.text().strip() else f"{self.host_edit.text().strip()}:{self.port_edit.value()}"
+        self._connection_label = f"{target} / {info.get('session_id', self.session_id_edit.text().strip() or '—')}"
+        self.update_stats_label()
         self._set_status("Connected")
 
     def send_input_message(self, message: dict):

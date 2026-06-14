@@ -26,6 +26,7 @@ project adheres to [Semantic Versioning](https://semver.org/).
 - Live localhost OpenSSH e2e coverage for the Qt transport, remote X11 session startup, SFTP upload/download, and clipboard propagation.
 - Quality presets (`LAN`, `WAN`, `Mobile`, `Custom`) for FPS/JPEG settings with profile/history persistence and live server updates.
 - `New Window` client action for multiple simultaneous connections, preloading the selected profile in the new client instance.
+- Active connection label with target/session id and uptime in the Desktop status area.
 
 ### Changed
 - Server proxy and clipboard loops now log disconnect/clipboard failures instead of silently swallowing them.

@@ -171,4 +171,18 @@
 - `QT_QPA_PLATFORM=offscreen timeout 120 python -m pytest -q tests/test_client_ui.py -x --timeout=60` → `8 passed`.
 
 ### Next step
-- Continue with clearer active-connection/session labeling and release artifact validation.
+- Continue with active connection/session status polish, then artifact build/run verification.
+
+## Cycle 9 completed — 2026-06-14
+
+### Done
+- Added an active connection label in the Desktop status area showing target host, session id, and uptime.
+- Reset uptime on disconnect and refresh the label from the existing stats timer.
+- Added UI regression coverage for session-info label updates.
+- Updated CHANGELOG.
+
+### Verified
+- `QT_QPA_PLATFORM=offscreen timeout 120 python -m pytest -q tests/test_client_ui.py -x --timeout=60` → `9 passed`.
+
+### Next step
+- Continue with release artifact build/run verification for Linux client/server, then inspect/push workflow status.
