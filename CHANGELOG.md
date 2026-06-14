@@ -16,9 +16,14 @@ project adheres to [Semantic Versioning](https://semver.org/).
 - Release checklist issue template
 - SFTP uploads now create missing remote parent directories before resuming/writing files.
 - Regression coverage for recursive SFTP parent-directory creation.
+- Xvfb e2e coverage for persistent session list/resume/stop and non-persistent idle cleanup.
 
 ### Changed
 - Server proxy and clipboard loops now log disconnect/clipboard failures instead of silently swallowing them.
+- Session listing/limits now ignore stale zombie worker states, and `--stop-session` waits for cleanup before returning.
+
+### Fixed
+- Reconnect/resume no longer consumes the worker Unix socket with a health-check probe before the real proxy bridge connects.
 
 ### Notes
 - Cut the first release with `git tag -s v0.1.0 -m "v0.1.0" && git push origin v0.1.0`

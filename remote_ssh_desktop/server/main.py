@@ -39,20 +39,44 @@ def read_state(session_id: str) -> dict[str, object] | None:
         return None
 
 
-def list_states() -> list[dict[str, object]]:
+def list_states(clean_stale: bool = True) -> list[dict[str, object]]:
     root = Path.home() / ".cache" / "remote-ssh-desktop"
     states: list[dict[str, object]] = []
     if not root.exists():
         return states
     for path in root.glob("*/session.json"):
         with contextlib.suppress(Exception):
-            states.append(json.loads(path.read_text(encoding="utf-8")))
+            state = json.loads(path.read_text(encoding="utf-8"))
+            if clean_stale and state.get("pid") and not pid_alive(state.get("pid")):
+                cleanup_session_files(str(state.get("session_id") or path.parent.name), state)
+                continue
+            states.append(state)
     return states
+
+
+def cleanup_session_files(session_id: str, state: dict[str, object] | None = None) -> None:
+    state = state or read_state(session_id) or {}
+    for key in ("socket_path",):
+        value = state.get(key)
+        if value:
+            with contextlib.suppress(Exception):
+                Path(str(value)).unlink()
+    root = session_root(session_id)
+    with contextlib.suppress(Exception):
+        state_path(session_id).unlink()
+    with contextlib.suppress(Exception):
+        root.rmdir()
 
 
 def pid_alive(pid: object) -> bool:
     try:
-        os.kill(int(pid), 0)
+        pid_int = int(pid)
+        os.kill(pid_int, 0)
+        proc_stat = Path(f"/proc/{pid_int}/stat")
+        if proc_stat.exists():
+            parts = proc_stat.read_text(encoding="utf-8", errors="replace").split()
+            if len(parts) > 2 and parts[2] == "Z":
+                return False
         return True
     except Exception:
         return False
@@ -128,9 +152,12 @@ def spawn_worker(args: argparse.Namespace, session_id: str) -> dict[str, object]
 
 def ensure_worker(args: argparse.Namespace, session_id: str) -> dict[str, object]:
     state = read_state(session_id)
-    if state and state.get("socket_path") and socket_alive(str(state["socket_path"])):
-        return state
-    if args.resume and not state:
+    if state and state.get("socket_path"):
+        socket_path_value = Path(str(state["socket_path"]))
+        if socket_path_value.exists() and pid_alive(state.get("pid")):
+            return state
+        cleanup_session_files(session_id, state)
+    if args.resume:
         raise RuntimeError("no existing session to resume")
     return spawn_worker(args, session_id)
 
@@ -182,8 +209,22 @@ def stop_session(session_id: str) -> bool:
         return False
     pid = state.get("pid")
     if not pid_alive(pid):
+        cleanup_session_files(session_id, state)
         return False
     os.kill(int(pid), signal.SIGTERM)
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline:
+        if not pid_alive(pid):
+            cleanup_session_files(session_id, state)
+            return True
+        time.sleep(0.1)
+    if pid_alive(pid):
+        os.kill(int(pid), signal.SIGKILL)
+        for _ in range(20):
+            if not pid_alive(pid):
+                break
+            time.sleep(0.1)
+    cleanup_session_files(session_id, state)
     return True
 
 

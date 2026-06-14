@@ -6,6 +6,7 @@ import hashlib
 import json
 import logging
 import os
+import signal
 import subprocess
 import time
 from dataclasses import dataclass, field
@@ -140,20 +141,35 @@ class SessionWorker:
             self.state.clipboard = ClipboardBridge(self.state.env, max_bytes=self.config.clipboard_max_bytes)
         self._write_state()
 
+    def request_stop(self) -> None:
+        self.state.running = False
+        self._needs_stop.set()
+
     async def run(self) -> None:
         await self._bootstrap()
-        with contextlib.suppress(FileNotFoundError):
-            self.state.socket_path.unlink()
-        self._server = await asyncio.start_unix_server(self._accept_proxy, path=str(self.state.socket_path))
-        self._write_state()
-        self._tasks = [
-            asyncio.create_task(self._capture_loop(), name="capture"),
-            asyncio.create_task(self._clipboard_loop(), name="clipboard"),
-            asyncio.create_task(self._watchdog(), name="watchdog"),
-        ]
-        async with self._server:
-            await self._needs_stop.wait()
-        await self.shutdown()
+        loop = asyncio.get_running_loop()
+        registered_signals: list[signal.Signals] = []
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            with contextlib.suppress(NotImplementedError):
+                loop.add_signal_handler(sig, self.request_stop)
+                registered_signals.append(sig)
+        try:
+            with contextlib.suppress(FileNotFoundError):
+                self.state.socket_path.unlink()
+            self._server = await asyncio.start_unix_server(self._accept_proxy, path=str(self.state.socket_path))
+            self._write_state()
+            self._tasks = [
+                asyncio.create_task(self._capture_loop(), name="capture"),
+                asyncio.create_task(self._clipboard_loop(), name="clipboard"),
+                asyncio.create_task(self._watchdog(), name="watchdog"),
+            ]
+            async with self._server:
+                await self._needs_stop.wait()
+        finally:
+            for sig in registered_signals:
+                with contextlib.suppress(Exception):
+                    loop.remove_signal_handler(sig)
+            await self.shutdown()
 
     async def _accept_proxy(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         if self.state.current_writer is not None:

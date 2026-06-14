@@ -52,3 +52,20 @@
 
 ### Next step
 - Continue with one focused gap: add tests for session lifecycle controls (`--persistent`, `--resume`, idle timeout, `--list-sessions`, `--stop-session`) using short-lived Xvfb worker/proxy runs with timeouts, then fix any lifecycle bugs found.
+
+## Cycle 2 completed — 2026-06-14
+
+### Done
+- Added live Xvfb lifecycle e2e coverage for persistent session `--list-sessions`, `--resume`, `--stop-session`, and non-persistent idle cleanup.
+- Fixed a real resume bug: `ensure_worker()` no longer uses a Unix-socket connect probe that consumed the worker's single current proxy connection before the actual stdio bridge attached.
+- Hardened stale session handling: `list_states()` cleans dead/zombie worker state, session counts ignore stale entries, and `--stop-session` waits for SIGTERM cleanup before escalating to SIGKILL and removing stale socket/state files.
+- Added SIGTERM/SIGINT handling inside `SessionWorker` so worker shutdown runs the normal cleanup path for Xvfb, desktop process, socket, and non-persistent state.
+
+### Verified
+- `python -m pytest -q tests/test_e2e_proxy.py -x --timeout=60` → `3 passed`.
+- `python -m pytest -q -x --timeout=60` → `11 passed`.
+- `python -m compileall -q remote_ssh_desktop tests` → OK.
+- Post-test process scan for `remote_ssh_desktop`, `Xvfb`, and `xterm` → no leftovers.
+
+### Next step
+- Continue with the next live-verification gap: clipboard/input/file-transfer e2e over a real local SSH server, or, if SSH daemon setup is unavailable, add isolated tests for clipboard anti-loop/UTF-8/limit behavior and transfer resume/cancel edge cases.
