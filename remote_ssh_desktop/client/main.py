@@ -1456,7 +1456,11 @@ def main() -> None:
     parser.add_argument("--last", "--recent", action="store_true", help="load and connect to the most recent connection from history")
     parser.add_argument("--self-test", action="store_true", help="run dependency diagnostics and exit")
     parser.add_argument("--self-test-json", action="store_true", help="print dependency diagnostics as JSON and exit")
+    parser.add_argument("--version", action="store_true", help="print version and exit")
     args = parser.parse_args()
+    if args.version:
+        print(f"remote-ssh-desktop-client {__version__}")
+        raise SystemExit(0)
     if args.self_test or args.self_test_json:
         report = run_diagnostics(role="client")
         if args.self_test_json:

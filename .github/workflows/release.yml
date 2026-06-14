@@ -26,18 +26,21 @@ jobs:
           - os: ubuntu-22.04
             name: client-linux
             kind: client
+            build_name: remote-ssh-desktop
             artifact: remote-ssh-desktop-client-linux-x86_64
             script: scripts/build_client_linux.sh
             binary: dist/remote-ssh-desktop
           - os: ubuntu-22.04
             name: server-linux
             kind: server
+            build_name: remote-ssh-desktop-server
             artifact: remote-ssh-desktop-server-linux-x86_64
             script: scripts/build_server_linux.sh
             binary: dist/remote-ssh-desktop-server
           - os: windows-2022
             name: client-windows
             kind: client
+            build_name: remote-ssh-desktop
             artifact: remote-ssh-desktop-client-windows-x86_64
             script: scripts/build_client_windows.ps1
             binary: dist/remote-ssh-desktop.exe
@@ -98,14 +101,14 @@ jobs:
         shell: pwsh
         env:
           RSD_KIND: ${{ matrix.kind }}
-          RSD_NAME: ${{ matrix.name }}
+          RSD_NAME: ${{ matrix.build_name }}
           PROJECT_ROOT: ${{ github.workspace }}
         run: ./scripts/build_client_windows.ps1
 
       - name: build binary (unix)
         if: runner.os != 'Windows'
         shell: bash
-        run: chmod +x scripts/*.sh && PROJECT_ROOT="$GITHUB_WORKSPACE" RSD_KIND=${{ matrix.kind }} RSD_NAME=${{ matrix.name }} bash ${{ matrix.script }}
+        run: chmod +x scripts/*.sh && PROJECT_ROOT="$GITHUB_WORKSPACE" RSD_KIND=${{ matrix.kind }} RSD_NAME=${{ matrix.build_name }} bash ${{ matrix.script }}
 
       - name: layout release asset
         shell: bash
@@ -125,6 +128,19 @@ jobs:
           cp "$binary" "$asset"
           chmod +x "$asset" || true
           ls -la dist
+
+      - name: smoke run built artifact
+        shell: bash
+        run: |
+          set -e
+          artifact="${{ matrix.artifact }}"
+          binary="${{ matrix.binary }}"
+          case "$binary" in
+            *.exe) asset="dist/$artifact.exe" ;;
+            *) asset="dist/$artifact" ;;
+          esac
+          "$asset" --version
+          QT_QPA_PLATFORM=offscreen "$asset" --self-test
 
       - name: compute sha256
         shell: bash
