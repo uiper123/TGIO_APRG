@@ -1,0 +1,38 @@
+# Maintainer: uiper123
+pkgname=remote-ssh-desktop
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="SSH-only remote X11 desktop — client and server"
+arch=('x86_64' 'aarch64')
+url="https://github.com/uiper123/TGIO_APRG"
+license=('MIT')
+depends=('python>=3.11' 'python-pyside6' 'python-asyncssh' 'python-pillow'
+         'python-mss' 'python-xlib' 'python-numpy' 'python-cryptography')
+optdepends=(
+    'xorg-server-xvfb: required for Linux server'
+    'xorg-xauth: required for Linux server'
+    'xclip: required for Linux server clipboard'
+    'xterm: default terminal for Linux server desktop'
+)
+makedepends=('python-build' 'python-installer' 'python-pyinstaller')
+source=("\$pkgname-\$pkgver.tar.gz::https://github.com/uiper123/TGIO_APRG/archive/refs/tags/v\$pkgver.tar.gz")
+sha256sums=('SKIP')
+
+prepare() {
+    cd "TGIO_APRG-\$pkgver"
+}
+
+build() {
+    cd "TGIO_APRG-\$pkgver"
+    pip install -r requirements-build.txt --quiet
+    PROJECT_ROOT="\$PWD" bash scripts/build_client_linux.sh
+    PROJECT_ROOT="\$PWD" bash scripts/build_server_linux.sh
+}
+
+package() {
+    cd "TGIO_APRG-\$pkgver"
+    install -Dm755 "dist/remote-ssh-desktop" "\$pkgdir/usr/bin/remote-ssh-desktop"
+    install -Dm755 "dist/remote-ssh-desktop-server" "\$pkgdir/usr/bin/remote-ssh-desktop-server"
+    install -Dm755 "scripts/install_server_deps.sh" "\$pkgdir/usr/share/remote-ssh-desktop/install_server_deps.sh"
+    install -Dm644 "README.md" "\$pkgdir/usr/share/doc/remote-ssh-desktop/README.md"
+}

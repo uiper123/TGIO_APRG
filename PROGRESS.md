@@ -359,3 +359,40 @@
 ### Next step
 - Add universal curl installer (install.sh) for all Linux distros.
 - Extend install_server_deps.sh for Arch Linux and ALT Linux.
+
+## Cycle 18 completed — 2026-06-14
+
+### Done
+- Created `scripts/install.sh` — universal one-liner installer for all Linux distros:
+  - Detects OS via /etc/os-release, downloads correct binary from GitHub Releases.
+  - Installs server system deps for: Debian/Ubuntu/Astra (apt-get), Arch/Manjaro (pacman),
+    ALT Linux (apt-rpm, different package names), Fedora/RHEL (dnf), openSUSE (zypper).
+  - Installs client Qt/xcb runtime deps for the same distros.
+  - Usage: curl | bash -s server|client|both
+- Created `scripts/install.ps1` — Windows PowerShell one-liner (iwr | iex):
+  - Downloads client .exe and server .exe from GitHub Releases.
+  - Adds $LOCALAPPDATA\remote-ssh-desktop to PATH.
+- Updated `scripts/install_server_deps.sh` with full multi-distro support:
+  - Arch Linux: pacman (xorg-server-xvfb, xorg-xauth, xclip, xterm).
+  - ALT Linux: apt-rpm with correct package names (xorg-xvfb, xorg-utils, xclip, xterm).
+  - openSUSE: zypper.
+  - ALT Linux detection via /etc/altlinux-release and apt-rpm signature.
+- Created `scripts/arch/PKGBUILD` for Arch User Repository (AUR) packaging.
+- Created `Dockerfile` and `docker-compose.yml` for containerised server deployment.
+  - FROM debian:bookworm-slim, openssh-server bundled, all X11 deps pre-installed.
+  - docker run -p 2222:22 -e SSH_PASSWORD=secret ghcr.io/uiper123/tgio-aprg-server
+- Updated README with one-line install commands for each platform.
+
+### Linux distro support matrix
+| Distro | Pkg manager | Server deps | Client deps |
+|---|---|---|---|
+| Ubuntu/Debian/Astra | apt-get | ✅ | ✅ |
+| Arch/Manjaro | pacman | ✅ NEW | ✅ NEW |
+| ALT Linux | apt-rpm | ✅ NEW | ✅ NEW |
+| Fedora/RHEL | dnf | ✅ | ✅ NEW |
+| openSUSE | zypper | ✅ NEW | ✅ NEW |
+
+### Next step
+- Delta-encoding video (send only changed 64x64 blocks).
+- Audio forwarding (PulseAudio/PipeWire → FRAME_AUDIO).
+- CI: add macOS + ARM64 to release.yml (needs manual edit due to proxy restriction).

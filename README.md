@@ -32,6 +32,30 @@ remote_ssh_desktop/
 └── crypto/keygen.py        # SSH key generation
 ```
 
+## One-line install
+
+**Linux (any distro — server + client):**
+```bash
+curl -fsSL https://raw.githubusercontent.com/uiper123/TGIO_APRG/main/scripts/install.sh | bash
+```
+
+**Linux — server only:**
+```bash
+curl -fsSL https://raw.githubusercontent.com/uiper123/TGIO_APRG/main/scripts/install.sh | bash -s server
+```
+
+**Windows (PowerShell — client):**
+```powershell
+iwr -useb https://raw.githubusercontent.com/uiper123/TGIO_APRG/main/scripts/install.ps1 | iex
+```
+
+**Docker (server):**
+```bash
+docker run -p 2222:22 -e SSH_PASSWORD=secret ghcr.io/uiper123/tgio-aprg-server
+```
+
+The installer auto-detects your distro and installs the right binary and system dependencies.
+
 ## Download and run
 
 Download the latest release from the [Releases page](https://github.com/uiper123/TGIO_APRG/releases).

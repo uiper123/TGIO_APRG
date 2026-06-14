@@ -1,0 +1,17 @@
+version: "3.9"
+
+services:
+  remote-ssh-desktop-server:
+    image: ghcr.io/uiper123/tgio-aprg-server:latest
+    # Or build locally: build: .
+    ports:
+      - "2222:22"
+    environment:
+      SSH_PASSWORD: "${SSH_PASSWORD:-changeme}"
+    restart: unless-stopped
+    # Uncomment to persist sessions across container restarts:
+    # volumes:
+    #   - rsd-sessions:/home/rsduser/.cache
+
+# volumes:
+#   rsd-sessions:
