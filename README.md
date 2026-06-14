@@ -54,7 +54,47 @@ iwr -useb https://raw.githubusercontent.com/uiper123/TGIO_APRG/main/scripts/inst
 docker run -p 2222:22 -e SSH_PASSWORD=secret ghcr.io/uiper123/tgio-aprg-server
 ```
 
-The installer auto-detects your distro and installs the right binary and system dependencies.
+The installer auto-detects your distro, installs the system dependencies (Xvfb,
+xauth, xclip, xterm on a server; Qt/xcb libs on a client), then installs the
+`remote-graph-ssh` package with `pip` straight from git. Because it is a real
+package install, both launch styles work afterwards with no extra steps:
+`remote-ssh-desktop-server` (console script) **and** `python3 -m
+remote_ssh_desktop.server.main`. The client's default remote command auto-detects
+whichever is present, so you never edit it by hand.
+
+## Easiest path: the in-app "Setup server" button
+
+You don't have to touch the server at all. In the client:
+
+1. Fill in **host**, **username**, and the server **password** (used once).
+2. Click **Setup server** in the toolbar.
+
+The client then, over SSH, in one shot:
+
+- creates an SSH key for you if you don't have one (`~/.ssh/id_remote_ssh_desktop`),
+- adds your **public** key to the server's `~/.ssh/authorized_keys`,
+- runs the official installer (system deps + package) on the server,
+- runs `--self-test` to confirm it's ready,
+- fills your key into the form and clears the password.
+
+After that just click **Connect** — future connections use the key, no password.
+Repeat **Setup server** once per machine you want to reach.
+
+## Troubleshooting
+
+- **`worker did not start`** — server is missing Xvfb/xauth/xclip/xterm or a window
+  manager. Run `bash scripts/install_server_deps.sh` (or the one-line installer)
+  and `... --self-test`.
+- **Black / empty screen** — no desktop or WM installed, so it falls back to a bare
+  `xterm`. Install one: `sudo apt-get install -y openbox fluxbox xfce4`.
+- **Drops right after "connected"** — you're on an old server build; pull the latest
+  `main` (the session lifecycle bug was fixed).
+- **`remote-ssh-desktop-server: command not found` over SSH** — `~/.local/bin` isn't
+  on the non-interactive SSH PATH. The default remote command falls back to
+  `python3 -m ...` automatically; if that also fails, add `~/.local/bin` to PATH in
+  `~/.bashrc`.
+- **Files won't transfer** — SFTP subsystem must be enabled in `sshd` (it is by
+  default) and the shared folder must exist.
 
 ## Download and run
 

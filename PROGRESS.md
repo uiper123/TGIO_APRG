@@ -521,3 +521,41 @@ cutting bandwidth sharply; keyframes still recover any de-synced client within 5
 ### Next step
 - Optional: record the composited frame after each delta so recordings are smooth;
   audio enable toggle (needs server --audio flag); multi-monitor selection.
+
+## Cycle 24 completed — 2026-06-14
+
+### Done — one-command install + one-click server provisioning
+Goal: user installs once, never copies anything, and the client wires each server itself.
+
+Found and fixed two blockers that made the existing one-liner unusable:
+- install.sh downloaded a bare binary filename that the v1.0.0 release doesn't ship
+  (release has .tar.gz/.zip), so `curl | bash -s server` 404'd.
+- The client's default remote command was `python -m ...` while the installer placed
+  a differently-named binary — connecting required hand-editing the remote command.
+
+Changes:
+- scripts/install.sh: now installs system deps (existing per-distro logic) then
+  `pip install --user` the package straight from git (PEP 668 `--break-system-packages`
+  fallback). Cross-arch, and makes BOTH `remote-ssh-desktop-server` and
+  `python3 -m remote_ssh_desktop.server.main` work. Added ensure_python + pip_install_pkg
+  helpers; the stale release-asset download path is gone.
+- pyproject.toml: dropped the unused `av` and `msgpack` deps (matches requirements.txt),
+  so pip install is light and needs no ffmpeg.
+- client/main.py: DEFAULT_REMOTE_COMMAND now auto-detects — prefers the
+  remote-ssh-desktop-server console script, falls back to python3 -m. No manual editing.
+- client/main.py: new "Setup server" toolbar button + ProvisionThread. Given host/user/
+  password once, it (over asyncssh): creates an ed25519 key if missing, appends the public
+  key to the server's authorized_keys, runs the official installer (deps + package), runs
+  --self-test, then fills the key into the form and clears the password. After that,
+  Connect uses the key — one click per machine.
+- README: rewrote the install section, added "Easiest path: the Setup server button"
+  and a Troubleshooting section.
+
+### Validated
+- bash -n scripts/install.sh: clean
+- py_compile client/main.py: clean
+- pyproject deps parse; no av/msgpack
+
+### Next step
+- Optional: a "[client]" optional-dependency extra so headless servers skip PySide6;
+  AppImage packaging for fully self-contained installs.

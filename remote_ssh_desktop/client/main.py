@@ -70,11 +70,18 @@ QUALITY_PRESETS = {
 }
 
 
+_SERVER_ARGS = (
+    "--proxy --session-id {session_id} --screen {screen} --fps {fps} "
+    "--quality {quality} --idle-timeout {idle_timeout} {persistent_flag} "
+    "{clipboard_flag} --clipboard-max-bytes {clipboard_max_bytes} --shared-folder {shared_folder}"
+)
+# Auto-detect how the server was installed: prefer the console script created by
+# `pip install`, fall back to running the module with python3.  Works whether the
+# server was installed via pip, the one-line installer, or from source.
 DEFAULT_REMOTE_COMMAND = (
-    "python -m remote_ssh_desktop.server.main --proxy --session-id {session_id} "
-    "--screen {screen} --fps {fps} --quality {quality} --idle-timeout {idle_timeout} "
-    "{persistent_flag} {clipboard_flag} --clipboard-max-bytes {clipboard_max_bytes} "
-    "--shared-folder {shared_folder}"
+    "if command -v remote-ssh-desktop-server >/dev/null 2>&1; then "
+    "remote-ssh-desktop-server " + _SERVER_ARGS + "; else "
+    "python3 -m remote_ssh_desktop.server.main " + _SERVER_ARGS + "; fi"
 )
 
 
@@ -580,6 +587,65 @@ class AsyncTask(QThread):
             self.success.emit(result)
 
 
+class ProvisionThread(QThread):
+    """One-shot server provisioning over SSH: push the user's public key into
+    authorized_keys, run the official installer (system deps + package), then
+    a self-test.  Uses its own event loop (no live transport required)."""
+
+    progress = Signal(str)
+    finished_ok = Signal(str)
+    failed = Signal(str)
+
+    def __init__(self, host: str, port: int, username: str, password: str, pub_line: str):
+        super().__init__()
+        self._host = host
+        self._port = port
+        self._user = username
+        self._password = password
+        self._pub = pub_line
+
+    def run(self) -> None:
+        try:
+            out = asyncio.run(self._provision())
+        except Exception as exc:
+            self.failed.emit(str(exc))
+        else:
+            self.finished_ok.emit(out)
+
+    async def _provision(self) -> str:
+        self.progress.emit("Connecting over SSH\u2026")
+        async with asyncssh.connect(
+            self._host, port=self._port, username=self._user,
+            password=self._password or None, known_hosts=None,
+        ) as conn:
+            self.progress.emit("Installing your public key into authorized_keys\u2026")
+            keyq = shlex.quote(self._pub)
+            await conn.run("mkdir -p ~/.ssh && chmod 700 ~/.ssh", check=True)
+            await conn.run(
+                "touch ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && "
+                f"(grep -qxF {keyq} ~/.ssh/authorized_keys || printf '%s\\n' {keyq} >> ~/.ssh/authorized_keys)",
+                check=True,
+            )
+            self.progress.emit("Installing the server (system deps + package)\u2026 this can take a minute")
+            install_cmd = (
+                "curl -fsSL https://raw.githubusercontent.com/uiper123/TGIO_APRG/main/scripts/install.sh "
+                "| bash -s server"
+            )
+            res = await conn.run(install_cmd, check=False)
+            if res.exit_status != 0:
+                tail = (res.stderr or res.stdout or "")[-800:]
+                raise RuntimeError(f"server install failed (exit {res.exit_status}):\n{tail}")
+            self.progress.emit("Verifying with --self-test\u2026")
+            test = await conn.run(
+                "remote-ssh-desktop-server --self-test || "
+                "python3 -m remote_ssh_desktop.server.main --self-test",
+                check=False,
+            )
+            tail = (test.stdout or "")[-500:]
+            status = "passed" if test.exit_status == 0 else f"exit {test.exit_status}"
+            return f"Server ready. Self-test {status}.\n{tail}"
+
+
 class RemoteDisplayWidget(QFrame):
     inputMessage = Signal(dict)
     localFilesDropped = Signal(list)
@@ -885,6 +951,7 @@ class MainWindow(QMainWindow):
             ("Connect", self.connect_session),
             ("Quick Connect", self.quick_connect),
             ("New Window", self.open_new_window),
+            ("Setup server", self.setup_server),
             ("Disconnect", self.disconnect_session),
             ("Fullscreen", self.toggle_fullscreen),
             ("Screenshot", self.save_screenshot),
@@ -1729,6 +1796,73 @@ class MainWindow(QMainWindow):
             self._clipboard_from_remote = True
             self._last_remote_clipboard = text
             self.clipboard.setText(text)
+
+    def _ensure_local_key(self):
+        """Return (private_key_path, authorized_keys_line). Reuse the key in the
+        form if set, else reuse/create a default ed25519 key in ~/.ssh."""
+        key_path = self.key_edit.text().strip()
+        if key_path:
+            priv = Path(key_path).expanduser()
+            pub = Path(str(priv) + ".pub")
+            if not pub.exists():
+                raise RuntimeError(f"public key not found: expected {pub}")
+            return priv, authorized_keys_line(pub)
+        ssh_dir = Path.home() / ".ssh"
+        priv = ssh_dir / "id_remote_ssh_desktop"
+        pub = ssh_dir / "id_remote_ssh_desktop.pub"
+        if not priv.exists():
+            priv, pub = save_keypair(ssh_dir, "id_remote_ssh_desktop", "ed25519", comment="remote-ssh-desktop")
+        return priv, authorized_keys_line(pub)
+
+    def setup_server(self):
+        """Provision a server in one click: push key + install + self-test."""
+        host = self.host_edit.text().strip()
+        port = self.port_edit.value()
+        user = self.user_edit.text().strip()
+        password = self.password_edit.text()
+        if not host or not user:
+            QMessageBox.warning(self, "Setup server", "Enter host and username first.")
+            return
+        if not password:
+            QMessageBox.warning(self, "Setup server",
+                                "Enter the server password. It is used once to install your SSH key, "
+                                "then future connections use the key.")
+            return
+        try:
+            priv, pub_line = self._ensure_local_key()
+        except Exception as exc:
+            QMessageBox.critical(self, "Setup server", f"Key error: {exc}")
+            return
+        confirm = QMessageBox.question(
+            self, "Setup server",
+            f"This will, on {user}@{host}:\n"
+            "  \u2022 add your SSH public key to authorized_keys\n"
+            "  \u2022 install the server (system deps + package) via the official installer\n"
+            "  \u2022 run a self-test\n\nProceed?",
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+        self._provision_thread = ProvisionThread(host, port, user, password, pub_line)
+        self._provision_thread.progress.connect(lambda m: self._set_status(m, busy=True))
+        self._provision_thread.failed.connect(self._on_provision_failed)
+
+        def _ok(msg: str):
+            self.key_edit.setText(str(priv))
+            self.password_edit.clear()
+            with contextlib.suppress(Exception):
+                self._save_defaults()
+            self._set_status("Server ready \u2014 connect with your key")
+            QMessageBox.information(self, "Setup server",
+                                    msg + "\n\nYour key is set and the password field is cleared. "
+                                    "Click Connect to start a session.")
+
+        self._provision_thread.finished_ok.connect(_ok)
+        self._set_status("Setting up server\u2026", busy=True)
+        self._provision_thread.start()
+
+    def _on_provision_failed(self, err: str):
+        self._set_status("Server setup failed")
+        QMessageBox.critical(self, "Setup server", err)
 
     def open_keygen(self):
         self.key_dialog = KeyGenDialog()

@@ -39,10 +39,10 @@ echo
 # ── Get latest release tag ────────────────────────────────────────────────
 LATEST=$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" | grep '"tag_name"' | sed 's/.*"tag_name": "\(.*\)".*/\1/')
 if [ -z "$LATEST" ]; then
-    echo "ERROR: could not determine latest release. Check internet connection." >&2
-    exit 1
+    echo "WARNING: could not determine latest release tag (continuing with pip install)." >&2
+else
+    echo "Latest release: $LATEST"
 fi
-echo "Latest release: $LATEST"
 
 # ── Download helper ───────────────────────────────────────────────────────
 download_artifact() {
@@ -57,15 +57,16 @@ download_artifact() {
 
 # ── Install server ────────────────────────────────────────────────────────
 install_server() {
-    local artifact="remote-ssh-desktop-server-linux-$ARCH_SUFFIX"
-    download_artifact "$artifact" "$INSTALL_DIR/remote-ssh-desktop-server"
-    echo
     echo "Installing server system dependencies..."
     install_server_deps
     echo
+    ensure_python
+    echo "Installing the server package (pip from git)..."
+    pip_install_pkg
+    echo
     echo "Server installed. Verify:"
-    echo "  remote-ssh-desktop-server --version"
     echo "  remote-ssh-desktop-server --self-test"
+    echo "  (or: python3 -m remote_ssh_desktop.server.main --self-test)"
 }
 
 # ── Install client ────────────────────────────────────────────────────────
@@ -80,14 +81,48 @@ install_client() {
         unzip -q /tmp/rsd-client.zip -d /Applications/
         echo "macOS client installed to /Applications/Remote SSH Desktop.app"
     else
-        local artifact="remote-ssh-desktop-client-linux-$ARCH_SUFFIX"
-        download_artifact "$artifact" "$INSTALL_DIR/remote-ssh-desktop"
-        echo
         echo "Installing Qt/xcb runtime dependencies..."
-        bash "$(dirname "$0")/install_client_deps.sh" 2>/dev/null || install_client_deps_inline
+        install_client_deps_inline
+        echo
+        ensure_python
+        echo "Installing the client package (pip from git)..."
+        pip_install_pkg
         echo
         echo "Client installed. Run: remote-ssh-desktop"
+        echo "  (or: python3 -m remote_ssh_desktop.client.main)"
     fi
+}
+
+# ── Ensure python3 + pip + git + curl ─────────────────────────────────────
+ensure_python() {
+    if ! command -v python3 >/dev/null 2>&1; then
+        echo "  Installing python3 + pip + git..."
+        if command -v apt-get >/dev/null 2>&1; then
+            sudo apt-get install -y python3 python3-pip git curl
+        elif command -v pacman >/dev/null 2>&1; then
+            sudo pacman -S --noconfirm --needed python python-pip git curl
+        elif command -v dnf >/dev/null 2>&1; then
+            sudo dnf install -y python3 python3-pip git curl
+        elif command -v zypper >/dev/null 2>&1; then
+            sudo zypper install -y python3 python3-pip git curl
+        else
+            echo "  WARNING: install python3, pip, git, and curl manually." >&2
+        fi
+    fi
+    if ! python3 -m pip --version >/dev/null 2>&1; then
+        command -v apt-get >/dev/null 2>&1 && sudo apt-get install -y python3-pip || true
+    fi
+}
+
+# ── pip install the package from git (PEP 668 aware) ──────────────────────
+pip_install_pkg() {
+    local spec="git+https://github.com/$REPO.git@main"
+    python3 -m pip install --user --upgrade "$spec"         || python3 -m pip install --user --break-system-packages --upgrade "$spec"
+    case ":$PATH:" in
+        *":$HOME/.local/bin:"*) : ;;
+        *) echo "  NOTE: add ~/.local/bin to your PATH so the launchers are found:"
+           echo "        echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ~/.bashrc && source ~/.bashrc" ;;
+    esac
 }
 
 # ── Inline client deps (when running piped without scripts/ dir) ──────────
