@@ -1077,7 +1077,11 @@ class MainWindow(QMainWindow):
         form.addRow(self.clipboard_check)
         form.addRow(self.reconnect_check)
         form.addRow(self.verify_host_key_check)
-        session_layout.addWidget(box)
+        box.setMaximumWidth(860)
+        _conn_row = QHBoxLayout()
+        _conn_row.addWidget(box)
+        _conn_row.addStretch(1)
+        session_layout.addLayout(_conn_row)
 
         self.display = RemoteDisplayWidget()
         self.display.setObjectName("remoteDisplay")
