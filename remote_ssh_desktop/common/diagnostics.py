@@ -77,7 +77,7 @@ def run_diagnostics(checker: Checker = _run, role: str = "client") -> Diagnostic
     module_sets = {
         "client": ("asyncssh", "PIL", "PySide6"),
         "server": ("PIL", "mss", "Xlib"),
-        "full": ("asyncssh", "PIL", "mss", "Xlib", "msgpack", "PySide6"),
+        "full": ("asyncssh", "PIL", "mss", "Xlib", "PySide6"),
     }
     for module in module_sets[role]:
         checks.append(_python_module_check(module))

@@ -258,5 +258,5 @@ The test suite includes protocol/jail tests and a local Xvfb end-to-end proxy te
 
 ## Current implementation choices
 
-- JPEG is the production codec in this implementation. The dependency list includes `pyav` for future H.264/H.265 work, but H.264 is not enabled by default.
+- JPEG is the production codec in this implementation. `pyav` (H.264/H.265) is not a dependency and not included in builds; it is listed here as a future option if hardware-accelerated encoding is added.
 - Authentication is delegated to SSH itself. The remote command runs as the authenticated Linux user, which gives per-user `$HOME`, UID/GID permissions, and independent X11 sessions without requiring a custom root PAM broker process.

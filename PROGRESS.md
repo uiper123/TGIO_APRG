@@ -225,3 +225,14 @@
 - Apply improved smoke run step to .github/workflows/release.yml (see session/release.yml for the ready patch).
 - Apply with: git diff HEAD~1 HEAD -- .github/workflows/release.yml (or copy session/release.yml).
 - Continue with Prompt 2: remove unused av/PyAV and msgpack dependencies.
+
+## Cycle 12 completed — 2026-06-14
+
+### Done
+- Confirmed via GitHub code search: `av`/`PyAV` and `msgpack` have zero imports across the entire codebase.
+- Removed `av>=12.0.0` and `msgpack>=1.0.8` from `requirements.txt`.
+- Removed `msgpack` from the `"full"` role module list in `common/diagnostics.py`.
+- Updated README `Current implementation choices`: marked pyav as not a dependency, not in builds, future option only.
+
+### Next step
+- Continue with Prompt 3: self-contained launch / clear dependency docs for each platform.
