@@ -181,22 +181,20 @@ jobs:
         shell: bash
         run: |
           cd dist
-          : > SHA256SUMS.txt
-          for f in remote-ssh-desktop-client-linux-x86_64 remote-ssh-desktop-server-linux-x86_64 remote-ssh-desktop-client-windows-x86_64.exe; do
-            [ -e "$f" ] || continue
-            sha256sum "$f" >> SHA256SUMS.txt
-          done
-          cat SHA256SUMS.txt
+          asset="${{ matrix.artifact }}"
+          case "${{ matrix.binary }}" in *.exe) asset="$asset.exe" ;; esac
+          sha256sum "$asset" > "SHA256SUMS-${{ matrix.artifact }}.txt"
+          cat "SHA256SUMS-${{ matrix.artifact }}.txt"
 
       - name: upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
           path: |
-            dist/remote-ssh-desktop-client-linux-x86_64
-            dist/remote-ssh-desktop-server-linux-x86_64
-            dist/remote-ssh-desktop-client-windows-x86_64.exe
-            dist/SHA256SUMS.txt
+            dist/${{ matrix.artifact }}
+            dist/${{ matrix.artifact }}.exe
+            dist/SHA256SUMS-${{ matrix.artifact }}.txt
+          if-no-files-found: ignore
 
   release:
     name: publish release
@@ -217,7 +215,7 @@ jobs:
         run: |
           cd artifacts
           : > SHA256SUMS.txt
-          find . -type f \( -name 'remote-ssh-desktop-client-linux-x86_64' -o -name 'remote-ssh-desktop-server-linux-x86_64' -o -name 'remote-ssh-desktop-client-windows-x86_64.exe' \) -print0 | xargs -0 sha256sum >> SHA256SUMS.txt
+          find . -type f -name 'SHA256SUMS-*.txt' -print0 | xargs -0 cat >> SHA256SUMS.txt
           sort -o SHA256SUMS.txt SHA256SUMS.txt
           cat SHA256SUMS.txt
 
@@ -266,25 +264,3 @@ jobs:
             artifacts/**/SHA256SUMS.txt
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  pypi:
-    name: build & publish sdist/wheel
-    needs: build
-    if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-22.04
-    permissions:
-      id-token: write
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: install build
-        run: python -m pip install --upgrade build twine
-      - name: build sdist and wheel
-        run: python -m build
-      - name: publish to pypi
-        if: contains(github.ref, '-') == false
-        uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          password: ${{ secrets.PYPI_TOKEN }}
