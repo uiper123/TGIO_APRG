@@ -559,3 +559,21 @@ Changes:
 ### Next step
 - Optional: a "[client]" optional-dependency extra so headless servers skip PySide6;
   AppImage packaging for fully self-contained installs.
+
+## Cycle 25 completed — 2026-06-14
+
+### Fixed — release builds were all failing
+Every matrix job (linux/arm64/macos/windows) failed at the `test` step with
+`No module named pytest`: the workflow installs requirements.txt + requirements-build.txt
+but neither listed pytest, so `python -m pytest` never ran and the release never published.
+- requirements-build.txt: added pytest (installed by the workflow on all platforms — no
+  workflow edit needed, which the proxy blocks anyway).
+- tests/test_client_ui.py: updated tab-count assertion 3 -> 4 (UI batch 2 added the
+  Monitor tab; this assertion would have failed once pytest actually ran).
+
+Note: both e2e tests pytest.skip when xterm/sshd/Xvfb are absent, and CI installs none
+of those, so they skip in CI rather than fail. The matrix and release upload list already
+include x86_64 + arm64 (linux) + macOS + windows.
+
+### Next step
+- Re-tag (e.g. v1.0.3) to trigger a clean release build.

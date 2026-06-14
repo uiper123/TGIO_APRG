@@ -26,7 +26,7 @@ def test_main_window_constructs_with_modern_controls(app, tmp_path, monkeypatch)
     window = MainWindow()
     try:
         assert __version__ in window.windowTitle()
-        assert window.tabs.count() == 3
+        assert window.tabs.count() == 4
         assert window.theme_combo.count() == 2
         assert window.status.text().startswith("●")
         assert window.display.objectName() == "remoteDisplay"
