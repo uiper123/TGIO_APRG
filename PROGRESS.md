@@ -205,3 +205,23 @@
 
 ### Next step
 - Continue with Linux client one-file build/run validation and CI release artifact download verification once a tagged workflow artifact exists.
+## Cycle 11 completed — 2026-06-14
+
+### Done
+- Audited .github/workflows/release.yml: confirmed Qt/X11 runtime packages already comprehensive (xvfb, xauth, libxcb-cursor0, libxkbcommon-x11-0, etc.).
+- Confirmed release and pypi jobs have `needs: build` so any failed smoke-run blocks publication.
+- Improved `smoke run built artifact` step — now platform-aware:
+  - Linux client: `timeout 30 "$asset" --version` + `timeout 120 xvfb-run -a "$asset" --self-test`
+  - Linux server: `timeout 30 "$asset" --version` + `timeout 120 "$asset" --self-test`
+  - Windows client: `"$asset" --version` + `QT_QPA_PLATFORM=offscreen "$asset" --self-test-json`
+- Added per-platform echo label for clearer CI log output.
+
+### Verified
+- `--self-test` exits before Qt initialization in both client and server, so xvfb tests binary startup + import + diagnostics.
+- Diagnostics exit code: 0 = PASS, 2 = FAIL (caught by `set -e` in the step).
+- All three matrix jobs are gated by the smoke-run step before the `upload artifacts` step.
+
+### Next step
+- Apply improved smoke run step to .github/workflows/release.yml (see session/release.yml for the ready patch).
+- Apply with: git diff HEAD~1 HEAD -- .github/workflows/release.yml (or copy session/release.yml).
+- Continue with Prompt 2: remove unused av/PyAV and msgpack dependencies.
