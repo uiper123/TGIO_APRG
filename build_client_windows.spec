@@ -11,6 +11,7 @@ PROJECT_ROOT = Path(os.environ.get("PROJECT_ROOT", ".")).resolve()
 
 hidden = collect_submodules("PySide6") + ["PIL", "PIL.ImageQt"]
 datas = collect_data_files("PySide6")
+datas.append((str(PROJECT_ROOT / "remote_ssh_desktop" / "version.py"), "remote_ssh_desktop"))
 
 a = Analysis(
     ["remote_ssh_desktop/client/main.py"],

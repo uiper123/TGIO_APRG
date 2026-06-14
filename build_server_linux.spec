@@ -11,12 +11,13 @@ PROJECT_ROOT = Path(os.environ.get("PROJECT_ROOT", ".")).resolve()
 
 hidden = collect_submodules("remote_ssh_desktop")
 hidden += ["mss", "Xlib", "Xlib.ext", "cryptography", "cryptography.hazmat.primitives.asymmetric"]
+datas = [(str(PROJECT_ROOT / "remote_ssh_desktop" / "version.py"), "remote_ssh_desktop")]
 
 a = Analysis(
     ["remote_ssh_desktop/server/main.py"],
     pathex=[str(PROJECT_ROOT)],
     binaries=[],
-    datas=[],
+    datas=datas,
     hiddenimports=hidden,
     hookspath=[],
     hooksconfig={},

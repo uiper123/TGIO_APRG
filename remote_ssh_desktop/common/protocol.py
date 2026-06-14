@@ -6,6 +6,8 @@ import struct
 from dataclasses import dataclass
 from typing import Any
 
+from remote_ssh_desktop.version import PROTOCOL_VERSION
+
 HEADER = struct.Struct(">BBI")
 MAX_PAYLOAD_SIZE = 128 * 1024 * 1024
 
@@ -21,7 +23,6 @@ FLAG_KEYFRAME = 0x02
 FLAG_COMPRESSED = 0x04
 FLAG_RAW = 0x08
 
-PROTOCOL_VERSION = 1
 SUPPORTED_CODECS = {"jpeg"}
 
 

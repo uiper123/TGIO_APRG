@@ -13,11 +13,12 @@ from types import SimpleNamespace
 from typing import Any, Callable
 
 import asyncssh
-from PySide6.QtCore import QPointF, QThread, Qt, Signal
+from PySide6.QtCore import QPointF, QThread, Qt, Signal, QTimer
 from PySide6.QtGui import QAction, QColor, QImage, QKeyEvent, QKeySequence, QPainter
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
+    QComboBox,
     QFileDialog,
     QFormLayout,
     QFrame,
@@ -37,6 +38,7 @@ from PySide6.QtWidgets import (
     QToolBar,
     QVBoxLayout,
     QWidget,
+    QStyleFactory,
 )
 
 from remote_ssh_desktop.common.files import join_remote_jail, normalize_remote_rel
@@ -52,6 +54,70 @@ from remote_ssh_desktop.common.protocol import (
     read_frame,
 )
 from remote_ssh_desktop.crypto.keygen import authorized_keys_line, save_keypair
+from remote_ssh_desktop.version import __version__
+
+
+DEFAULT_REMOTE_COMMAND = (
+    "python -m remote_ssh_desktop.server.main --proxy --session-id {session_id} "
+    "--screen {screen} --fps {fps} --quality {quality} --idle-timeout {idle_timeout} "
+    "{persistent_flag} {clipboard_flag} --clipboard-max-bytes {clipboard_max_bytes} "
+    "--shared-folder {shared_folder}"
+)
+
+
+DARK_QSS = """
+QMainWindow, QWidget { background: #0f1218; color: #e6edf3; font-family: Inter, Segoe UI, Arial, sans-serif; font-size: 13px; }
+QToolBar { background: #151a23; border: 0; border-bottom: 1px solid #273244; spacing: 6px; padding: 8px; }
+QToolButton, QPushButton { background: #2563eb; color: white; border: 0; border-radius: 8px; padding: 8px 12px; font-weight: 600; }
+QToolButton:hover, QPushButton:hover { background: #3b82f6; }
+QToolButton:pressed, QPushButton:pressed { background: #1d4ed8; }
+QPushButton[secondary="true"] { background: #243044; color: #d7e1f0; }
+QPushButton[secondary="true"]:hover { background: #31415c; }
+QLineEdit, QSpinBox, QComboBox { background: #111827; color: #eef4ff; border: 1px solid #334155; border-radius: 8px; padding: 7px 9px; selection-background-color: #2563eb; }
+QLineEdit:focus, QSpinBox:focus, QComboBox:focus { border-color: #60a5fa; }
+QGroupBox { border: 1px solid #263246; border-radius: 14px; margin-top: 14px; padding: 14px; background: #131923; font-weight: 700; }
+QGroupBox::title { subcontrol-origin: margin; left: 14px; padding: 0 6px; color: #93c5fd; }
+QTabWidget::pane { border: 1px solid #263246; border-radius: 14px; top: -1px; }
+QTabBar::tab { background: #151a23; color: #9fb1c8; border: 1px solid #263246; padding: 10px 18px; border-top-left-radius: 10px; border-top-right-radius: 10px; }
+QTabBar::tab:selected { background: #1e293b; color: #ffffff; }
+QListWidget { background: #0b1020; border: 1px solid #263246; border-radius: 12px; padding: 6px; }
+QListWidget::item { padding: 9px; border-radius: 8px; }
+QListWidget::item:selected { background: #1d4ed8; color: #ffffff; }
+QProgressBar { background: #111827; border: 1px solid #334155; border-radius: 8px; height: 14px; text-align: center; }
+QProgressBar::chunk { background: #22c55e; border-radius: 8px; }
+QLabel[muted="true"] { color: #94a3b8; }
+QLabel[status="true"] { background: #111827; border: 1px solid #263246; border-radius: 10px; padding: 8px 10px; }
+QFrame#remoteDisplay { border: 1px solid #263246; border-radius: 16px; background: #05070d; }
+"""
+
+LIGHT_QSS = """
+QMainWindow, QWidget { background: #f6f8fb; color: #0f172a; font-family: Inter, Segoe UI, Arial, sans-serif; font-size: 13px; }
+QToolBar { background: #ffffff; border: 0; border-bottom: 1px solid #dbe4f0; spacing: 6px; padding: 8px; }
+QToolButton, QPushButton { background: #2563eb; color: white; border: 0; border-radius: 8px; padding: 8px 12px; font-weight: 600; }
+QToolButton:hover, QPushButton:hover { background: #1d4ed8; }
+QPushButton[secondary="true"] { background: #e2e8f0; color: #0f172a; }
+QPushButton[secondary="true"]:hover { background: #cbd5e1; }
+QLineEdit, QSpinBox, QComboBox { background: #ffffff; color: #0f172a; border: 1px solid #cbd5e1; border-radius: 8px; padding: 7px 9px; selection-background-color: #2563eb; }
+QLineEdit:focus, QSpinBox:focus, QComboBox:focus { border-color: #2563eb; }
+QGroupBox { border: 1px solid #dbe4f0; border-radius: 14px; margin-top: 14px; padding: 14px; background: #ffffff; font-weight: 700; }
+QGroupBox::title { subcontrol-origin: margin; left: 14px; padding: 0 6px; color: #1d4ed8; }
+QTabWidget::pane { border: 1px solid #dbe4f0; border-radius: 14px; top: -1px; background: #ffffff; }
+QTabBar::tab { background: #eaf0f8; color: #475569; border: 1px solid #dbe4f0; padding: 10px 18px; border-top-left-radius: 10px; border-top-right-radius: 10px; }
+QTabBar::tab:selected { background: #ffffff; color: #0f172a; }
+QListWidget { background: #ffffff; border: 1px solid #dbe4f0; border-radius: 12px; padding: 6px; }
+QListWidget::item { padding: 9px; border-radius: 8px; }
+QListWidget::item:selected { background: #2563eb; color: #ffffff; }
+QProgressBar { background: #e2e8f0; border: 1px solid #cbd5e1; border-radius: 8px; height: 14px; text-align: center; }
+QProgressBar::chunk { background: #16a34a; border-radius: 8px; }
+QLabel[muted="true"] { color: #64748b; }
+QLabel[status="true"] { background: #ffffff; border: 1px solid #dbe4f0; border-radius: 10px; padding: 8px 10px; }
+QFrame#remoteDisplay { border: 1px solid #dbe4f0; border-radius: 16px; background: #0f172a; }
+"""
+
+
+def apply_theme(app: QApplication, theme: str) -> None:
+    app.setStyle(QStyleFactory.create("Fusion"))
+    app.setStyleSheet(LIGHT_QSS if theme == "light" else DARK_QSS)
 
 
 def qt_user_role():
@@ -76,12 +142,7 @@ class ClientConfig:
     password: str = ""
     key_file: str = ""
     key_passphrase: str = ""
-    remote_command: str = (
-        "python -m remote_ssh_desktop.server.main --proxy --session-id {session_id} "
-        "--screen {screen} --fps {fps} --quality {quality} --idle-timeout {idle_timeout} "
-        "{persistent_flag} {clipboard_flag} --clipboard-max-bytes {clipboard_max_bytes} "
-        "--shared-folder {shared_folder}"
-    )
+    remote_command: str = DEFAULT_REMOTE_COMMAND
     session_id: str = ""
     screen: tuple[int, int] = (1920, 1080)
     fps: int = 18
@@ -573,18 +634,32 @@ class KeyGenDialog(QWidget):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Remote SSH Desktop")
+        self.setWindowTitle(f"Remote SSH Desktop {__version__}")
         self.transport: TransportThread | None = None
         self._tasks: list[QThread] = []
         self._clipboard_from_remote = False
         self._last_remote_clipboard = ""
         self._remote_rel = ""
         self._remote_root = "~/RemoteShared"
+        self._frames_rendered = 0
+        self._last_frame_sample = time.monotonic()
+        self._last_frame_count = 0
         self._build_ui()
         self._load_defaults()
+        self._stats_timer = QTimer(self)
+        self._stats_timer.timeout.connect(self.update_stats_label)
+        self._stats_timer.start(1000)
+
+    def _secondary(self, button: QPushButton) -> QPushButton:
+        button.setProperty("secondary", "true")
+        return button
+
+    def _set_status(self, text: str, busy: bool = False) -> None:
+        self.status.setText(("⏳ " if busy else "● ") + text)
 
     def _build_ui(self):
-        toolbar = QToolBar()
+        toolbar = QToolBar("Remote controls")
+        toolbar.setMovable(False)
         self.addToolBar(toolbar)
         for text, handler in [
             ("Connect", self.connect_session),
@@ -598,24 +673,38 @@ class MainWindow(QMainWindow):
             action = QAction(text, self)
             action.triggered.connect(handler)
             toolbar.addAction(action)
+        self.theme_combo = QComboBox()
+        self.theme_combo.addItems(["Dark", "Light"])
+        self.theme_combo.currentTextChanged.connect(lambda value: apply_theme(QApplication.instance(), value.lower()))
+        toolbar.addSeparator()
+        toolbar.addWidget(QLabel("Theme"))
+        toolbar.addWidget(self.theme_combo)
 
         self.tabs = QTabWidget()
         self.session_tab = QWidget()
         self.files_tab = QWidget()
-        self.tabs.addTab(self.session_tab, "Session")
+        self.tabs.addTab(self.session_tab, "Desktop")
         self.tabs.addTab(self.files_tab, "Files")
         self.setCentralWidget(self.tabs)
 
         session_layout = QVBoxLayout(self.session_tab)
+        session_layout.setContentsMargins(14, 14, 14, 14)
+        session_layout.setSpacing(12)
+        hero = QLabel("SSH-only isolated X11 desktop — no VNC/RDP, encrypted transport, SFTP shared folder.")
+        hero.setProperty("muted", "true")
+        session_layout.addWidget(hero)
         box = QGroupBox("Connection")
         form = QFormLayout(box)
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        form.setHorizontalSpacing(14)
+        form.setVerticalSpacing(10)
         self.host_edit = QLineEdit()
         self.port_edit = QSpinBox(); self.port_edit.setRange(1, 65535); self.port_edit.setValue(22)
         self.user_edit = QLineEdit()
         self.password_edit = QLineEdit(); self.password_edit.setEchoMode(QLineEdit.EchoMode.Password)
         self.key_edit = QLineEdit()
         self.key_pass_edit = QLineEdit(); self.key_pass_edit.setEchoMode(QLineEdit.EchoMode.Password)
-        self.remote_command_edit = QLineEdit(ClientConfig.remote_command)
+        self.remote_command_edit = QLineEdit(DEFAULT_REMOTE_COMMAND)
         self.session_id_edit = QLineEdit(uuid.uuid4().hex[:12])
         self.screen_edit = QLineEdit("1920x1080")
         self.shared_folder_edit = QLineEdit("~/RemoteShared")
@@ -644,28 +733,38 @@ class MainWindow(QMainWindow):
         session_layout.addWidget(box)
 
         self.display = RemoteDisplayWidget()
+        self.display.setObjectName("remoteDisplay")
         self.display.inputMessage.connect(self.send_input_message)
         self.display.localFilesDropped.connect(self.upload_local_files)
         session_layout.addWidget(self.display, 1)
-        self.status = QLabel("Disconnected")
-        session_layout.addWidget(self.status)
+        status_row = QHBoxLayout()
+        self.status = QLabel("● Disconnected")
+        self.status.setProperty("status", "true")
+        self.stats = QLabel("FPS 0 · ping — · quality —")
+        self.stats.setProperty("muted", "true")
+        status_row.addWidget(self.status, 1)
+        status_row.addWidget(self.stats)
+        session_layout.addLayout(status_row)
         self.clipboard = QApplication.clipboard()
         self.clipboard.dataChanged.connect(self.local_clipboard_changed)
 
         files_layout = QVBoxLayout(self.files_tab)
+        files_layout.setContentsMargins(14, 14, 14, 14)
+        files_layout.setSpacing(12)
         row = QHBoxLayout()
         self.remote_path_edit = QLineEdit("")
-        self.refresh_button = QPushButton("Refresh")
+        self.remote_path_edit.setPlaceholderText("Relative path inside shared folder")
+        self.refresh_button = self._secondary(QPushButton("Refresh"))
         self.refresh_button.clicked.connect(self.refresh_files)
-        self.up_button = QPushButton("Up")
+        self.up_button = self._secondary(QPushButton("Up"))
         self.up_button.clicked.connect(self.go_up)
-        self.mkdir_button = QPushButton("Mkdir")
+        self.mkdir_button = self._secondary(QPushButton("Mkdir"))
         self.mkdir_button.clicked.connect(self.mkdir_remote)
         self.upload_button = QPushButton("Upload…")
         self.upload_button.clicked.connect(self.upload_file_dialog)
-        self.download_button = QPushButton("Download…")
+        self.download_button = self._secondary(QPushButton("Download…"))
         self.download_button.clicked.connect(self.download_file_dialog)
-        self.cancel_transfer_button = QPushButton("Cancel transfer")
+        self.cancel_transfer_button = self._secondary(QPushButton("Cancel transfer"))
         self.cancel_transfer_button.clicked.connect(self.cancel_transfers)
         for widget in [QLabel("Shared relative path"), self.remote_path_edit, self.up_button, self.refresh_button, self.mkdir_button, self.upload_button, self.download_button, self.cancel_transfer_button]:
             row.addWidget(widget)
@@ -676,6 +775,39 @@ class MainWindow(QMainWindow):
         self.progress = QProgressBar()
         self.progress.setRange(0, 100)
         files_layout.addWidget(self.progress)
+
+    def validate_config(self) -> bool:
+        errors: list[str] = []
+        if not self.host_edit.text().strip():
+            errors.append("Host is required")
+        if not self.user_edit.text().strip():
+            errors.append("Username is required")
+        if not self.password_edit.text() and not self.key_edit.text().strip():
+            errors.append("Use a password or a private key")
+        try:
+            width, height = (int(part) for part in self.screen_edit.text().lower().replace(" ", "").split("x", 1))
+            if width < 320 or height < 240:
+                errors.append("Screen must be at least 320x240")
+        except Exception:
+            errors.append("Screen must look like 1920x1080")
+        if self.key_edit.text().strip() and not Path(self.key_edit.text().strip()).expanduser().exists():
+            errors.append("Private key file does not exist")
+        if errors:
+            QMessageBox.warning(self, "Connection settings", "\n".join(errors))
+            self._set_status("Fix connection settings")
+            return False
+        return True
+
+    def update_stats_label(self) -> None:
+        now = time.monotonic()
+        elapsed = max(now - self._last_frame_sample, 0.001)
+        frames = self._frames_rendered - self._last_frame_count
+        fps = frames / elapsed
+        self._last_frame_sample = now
+        self._last_frame_count = self._frames_rendered
+        transport = self.transport
+        quality = getattr(getattr(transport, "config", None), "quality", "—") if transport else "—"
+        self.stats.setText(f"FPS {fps:.1f} · quality {quality} · session {self.session_id_edit.text().strip() or '—'}")
 
     def _load_defaults(self):
         from PySide6.QtCore import QSettings
@@ -717,29 +849,35 @@ class MainWindow(QMainWindow):
     def connect_session(self):
         if self.transport and self.transport.isRunning():
             return
+        if not self.validate_config():
+            return
         cfg = self.config()
         self.session_id_edit.setText(cfg.session_id)
         self.transport = TransportThread(cfg)
-        self.transport.videoFrame.connect(self.display.setFrame)
+        self.transport.videoFrame.connect(self.handle_video_frame)
         self.transport.sessionInfo.connect(self.handle_session_info)
         self.transport.clipboardReceived.connect(self.handle_remote_clipboard)
-        self.transport.statusChanged.connect(self.status.setText)
+        self.transport.statusChanged.connect(lambda text: self._set_status(text, "connecting" in text.lower() or "reconnecting" in text.lower()))
         self.transport.disconnected.connect(self.handle_disconnect)
         self.transport.transferProgress.connect(self.handle_transfer_progress)
         self.transport.start()
-        self.status.setText("Connecting…")
+        self._set_status("Connecting…", busy=True)
         self._save_defaults()
 
     def disconnect_session(self):
         if self.transport:
             self.transport.stop()
-            self.status.setText("Disconnecting…")
+            self._set_status("Disconnecting…", busy=True)
 
     def toggle_fullscreen(self):
         self.showNormal() if self.isFullScreen() else self.showFullScreen()
 
+    def handle_video_frame(self, jpeg_bytes: bytes) -> None:
+        self._frames_rendered += 1
+        self.display.setFrame(jpeg_bytes)
+
     def handle_disconnect(self, message: str):
-        self.status.setText(message)
+        self._set_status(message or "Disconnected")
 
     def handle_session_info(self, info: dict):
         screen = info.get("screen")
@@ -749,6 +887,7 @@ class MainWindow(QMainWindow):
         if folder:
             self._remote_root = str(folder)
         self.refresh_files()
+        self._set_status("Connected")
 
     def send_input_message(self, message: dict):
         if self.transport:
@@ -835,7 +974,7 @@ class MainWindow(QMainWindow):
     def cancel_transfers(self):
         if self.transport:
             self.transport.cancel_transfers()
-            self.status.setText("transfer cancellation requested")
+            self._set_status("Transfer cancellation requested")
 
     def upload_file_dialog(self):
         local_path, _ = QFileDialog.getOpenFileName(self, "Upload file")
@@ -866,7 +1005,7 @@ class MainWindow(QMainWindow):
     def handle_transfer_progress(self, transfer_id: str, done: int, total: int):
         pct = int((done / total) * 100) if total else 0
         self.progress.setValue(max(0, min(100, pct)))
-        self.status.setText(f"transfer {transfer_id}: {done}/{total}")
+        self._set_status(f"transfer {transfer_id}: {done}/{total}", busy=done < total)
 
 
 def configure_qt_platform() -> None:
@@ -885,6 +1024,7 @@ def main() -> None:
         return
     configure_qt_platform()
     app = QApplication(sys.argv)
+    apply_theme(app, "dark")
     window = MainWindow()
     window.resize(1400, 1000)
     window.show()

@@ -27,18 +27,30 @@ if (Test-Path $Build) { Remove-Item -Recurse -Force $Build }
 New-Item -ItemType Directory -Force -Path $Dist | Out-Null
 
 $pyi = @(
-  '--noconfirm', '--clean',
+  '--noconfirm', '--clean', '--onefile',
   '--name', $Name,
   '--distpath', $Dist,
   '--workpath', $Build,
   '--specpath', $Root,
-  '--collect-submodules', 'PySide6',
   '--collect-submodules', 'asyncssh',
   '--collect-submodules', 'PIL',
-  '--collect-submodules', 'mss',
-  '--collect-submodules', 'remote_ssh_desktop',
-  '--hidden-import', 'PIL.ImageQt'
+  '--collect-submodules', 'mss'
 )
+if ($Kind -eq 'client') {
+  $pyi += @('--collect-submodules', 'remote_ssh_desktop', '--collect-submodules', 'PySide6', '--hidden-import', 'PIL.ImageQt')
+} else {
+  $pyi += @(
+    '--collect-submodules', 'remote_ssh_desktop.server',
+    '--collect-submodules', 'remote_ssh_desktop.common',
+    '--collect-submodules', 'remote_ssh_desktop.crypto',
+    '--hidden-import', 'remote_ssh_desktop.version',
+    '--hidden-import', 'Xlib',
+    '--hidden-import', 'Xlib.ext',
+    '--hidden-import', 'Xlib.ext.xtest',
+    '--hidden-import', 'Xlib.ext.xfixes',
+    '--exclude-module', 'PySide6'
+  )
+}
 if ($Console) { $pyi += '--console' } else { $pyi += '--windowed' }
 $pyi += $Entry
 

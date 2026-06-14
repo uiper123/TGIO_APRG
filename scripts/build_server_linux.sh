@@ -3,4 +3,4 @@
 
 set -euo pipefail
 export RSD_KIND=server
-exec "$(dirname "$0")/build_client_linux.sh" "$@"
+exec bash "$(dirname "$0")/build_client_linux.sh" "$@"

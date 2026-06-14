@@ -90,6 +90,9 @@ jobs:
           python -c "import remote_ssh_desktop.client.main, remote_ssh_desktop.server.main, remote_ssh_desktop.crypto.keygen"
           python -m remote_ssh_desktop.crypto.keygen --help
 
+      - name: test
+        run: python -m pytest -q
+
       - name: build binary (windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -104,58 +107,31 @@ jobs:
         shell: bash
         run: chmod +x scripts/*.sh && PROJECT_ROOT="$GITHUB_WORKSPACE" RSD_KIND=${{ matrix.kind }} RSD_NAME=${{ matrix.name }} bash ${{ matrix.script }}
 
-      - name: layout artifact dir
+      - name: layout release asset
         shell: bash
         run: |
           set -e
           artifact="${{ matrix.artifact }}"
-          mkdir -p "dist/$artifact"
-          candidate=""
-          for d in dist/remote-ssh-desktop dist/remote-ssh-desktop-server dist/client-linux dist/server-linux dist/client-windows; do
-            if [ -d "$d" ]; then
-              candidate="$d"
-              break
-            fi
-          done
-          if [ -z "$candidate" ]; then
-            echo "no PyInstaller output dir found" >&2
-            ls -la dist
+          binary="${{ matrix.binary }}"
+          if [ ! -f "$binary" ]; then
+            echo "expected one-file PyInstaller binary not found: $binary" >&2
+            find dist -maxdepth 3 -type f -print
             exit 1
           fi
-          echo "Using PyInstaller output: $candidate"
-          cp -R "$candidate"/. "dist/$artifact"/
-          ls -la "dist/$artifact"
-
-      - name: package archives
-        if: runner.os != 'Windows'
-        shell: bash
-        run: |
-          cd dist
-          if [ -d "${{ matrix.artifact }}" ]; then
-            tar -czf "${{ matrix.artifact }}.tar.gz" "${{ matrix.artifact }}"
-            if command -v zip >/dev/null 2>&1; then
-              zip -r "${{ matrix.artifact }}.zip" "${{ matrix.artifact }}" >/dev/null
-            fi
-          fi
-          ls -la
-
-      - name: package archives (windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $artifact = "${{ matrix.artifact }}"
-          Set-Location dist
-          if (Test-Path $artifact) {
-            Compress-Archive -Path $artifact -DestinationPath "$artifact.zip" -Force
-          }
-          Get-ChildItem
+          case "$binary" in
+            *.exe) asset="dist/$artifact.exe" ;;
+            *) asset="dist/$artifact" ;;
+          esac
+          cp "$binary" "$asset"
+          chmod +x "$asset" || true
+          ls -la dist
 
       - name: compute sha256
         shell: bash
         run: |
           cd dist
           : > SHA256SUMS.txt
-          for f in *.tar.gz *.zip; do
+          for f in remote-ssh-desktop-client-linux-x86_64 remote-ssh-desktop-server-linux-x86_64 remote-ssh-desktop-client-windows-x86_64.exe; do
             [ -e "$f" ] || continue
             sha256sum "$f" >> SHA256SUMS.txt
           done
@@ -166,8 +142,9 @@ jobs:
         with:
           name: ${{ matrix.artifact }}
           path: |
-            dist/*.tar.gz
-            dist/*.zip
+            dist/remote-ssh-desktop-client-linux-x86_64
+            dist/remote-ssh-desktop-server-linux-x86_64
+            dist/remote-ssh-desktop-client-windows-x86_64.exe
             dist/SHA256SUMS.txt
 
   release:
@@ -189,7 +166,7 @@ jobs:
         run: |
           cd artifacts
           : > SHA256SUMS.txt
-          find . -type f \( -name '*.tar.gz' -o -name '*.zip' \) -print0 | xargs -0 sha256sum >> SHA256SUMS.txt
+          find . -type f \( -name 'remote-ssh-desktop-client-linux-x86_64' -o -name 'remote-ssh-desktop-server-linux-x86_64' -o -name 'remote-ssh-desktop-client-windows-x86_64.exe' \) -print0 | xargs -0 sha256sum >> SHA256SUMS.txt
           sort -o SHA256SUMS.txt SHA256SUMS.txt
           cat SHA256SUMS.txt
 
@@ -213,9 +190,9 @@ jobs:
               f"## Changes\n\n{bullets}\n\n"
               "## Artifacts\n\n"
               "| Platform | File |\n|---|---|\n"
-              "| Linux client (x86_64) | `remote-ssh-desktop-client-linux-x86_64.tar.gz` |\n"
-              "| Linux server (x86_64) | `remote-ssh-desktop-server-linux-x86_64.tar.gz` |\n"
-              "| Windows client (x86_64) | `remote-ssh-desktop-client-windows-x86_64.zip` |\n\n"
+              "| Linux client (x86_64) | `remote-ssh-desktop-client-linux-x86_64` |\n"
+              "| Linux server (x86_64) | `remote-ssh-desktop-server-linux-x86_64` |\n"
+              "| Windows client (x86_64) | `remote-ssh-desktop-client-windows-x86_64.exe` |\n\n"
               "SHA-256 checksums are in `SHA256SUMS.txt`."
           )
           with open(os.environ["GITHUB_OUTPUT"], "w") as fh:
@@ -229,8 +206,9 @@ jobs:
           generate_release_notes: true
           body: ${{ steps.changelog.outputs.body }}
           files: |
-            artifacts/**/*.tar.gz
-            artifacts/**/*.zip
+            artifacts/**/remote-ssh-desktop-client-linux-x86_64
+            artifacts/**/remote-ssh-desktop-server-linux-x86_64
+            artifacts/**/remote-ssh-desktop-client-windows-x86_64.exe
             artifacts/**/SHA256SUMS.txt
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
