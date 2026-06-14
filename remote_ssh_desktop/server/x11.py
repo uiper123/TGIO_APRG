@@ -212,17 +212,25 @@ class XInputController:
 
     def key(self, keysym: str, down: bool, mods: Iterable[str] = ()) -> None:
         modmap = {"ctrl": "Control_L", "control": "Control_L", "alt": "Alt_L", "shift": "Shift_L", "super": "Super_L", "meta": "Super_L"}
-        pressed: list[int] = []
+        mod_codes: list[int] = []
         for mod in mods:
             code = self._keycode(modmap.get(str(mod).lower(), str(mod)))
             if code:
-                pressed.append(code)
+                mod_codes.append(code)
+        key_code = self._keycode(keysym)
+        if down:
+            # Press modifiers first, then the key, and leave the modifiers held
+            # so the combination is registered for the whole duration of the press.
+            for code in mod_codes:
                 xtest.fake_input(self.display, X.KeyPress, code)
-        code = self._keycode(keysym)
-        if code:
-            xtest.fake_input(self.display, X.KeyPress if down else X.KeyRelease, code)
-        for code in reversed(pressed):
-            xtest.fake_input(self.display, X.KeyRelease, code)
+            if key_code:
+                xtest.fake_input(self.display, X.KeyPress, key_code)
+        else:
+            # Release the key first, then the modifiers in reverse order.
+            if key_code:
+                xtest.fake_input(self.display, X.KeyRelease, key_code)
+            for code in reversed(mod_codes):
+                xtest.fake_input(self.display, X.KeyRelease, code)
         self.display.sync()
 
     def close(self) -> None:

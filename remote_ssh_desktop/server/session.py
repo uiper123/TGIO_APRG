@@ -200,8 +200,8 @@ class SessionWorker:
         self.state.client_ready = False
         self._touch_proxy()
         await self._send_session()
-        if self.state.clipboard:
-            text = self.state.clipboard.read_text()
+        if self.config.clipboard_enabled:
+            text = self.backend.get_clipboard()
             if text:
                 self.state.last_local_clipboard = text
                 await self._send_frame(FRAME_CLIPBOARD, {"t": "clipboard", "format": "text", "data": text, "origin": "server"})
@@ -227,7 +227,7 @@ class SessionWorker:
             {
                 "t": "session",
                 "session_id": self.config.session_id,
-                "display": self.state.display,
+                "display": self.backend.display_info.get("display", ""),
                 "screen": list(self.config.screen_size),
                 "fps": self.state.fps,
                 "quality": self.state.quality,
@@ -494,17 +494,8 @@ class SessionWorker:
         self.state.running = False
         for task in self._tasks:
             task.cancel()
-        if self.state.xinput:
-            self.state.xinput.close()
-        for proc in (self.state.desktop, self.state.xvfb):
-            if proc and proc.poll() is None:
-                with contextlib.suppress(Exception):
-                    proc.terminate()
-                try:
-                    proc.wait(timeout=5)
-                except Exception:
-                    with contextlib.suppress(Exception):
-                        proc.kill()
+        with contextlib.suppress(Exception):
+            self.backend.shutdown()
         with contextlib.suppress(Exception):
             if self.state.socket_path.exists():
                 self.state.socket_path.unlink()

@@ -459,3 +459,33 @@
 
 ### Next step
 - Optional: audio enable toggle (needs server --audio flag), multi-monitor selection.
+
+## Cycle 22 completed — 2026-06-14
+
+### Fixed — server sessions were fully broken after the backends refactor
+The backends refactor (35c303e0) slimmed SessionState but left three call sites in
+server/session.py referencing deleted fields. Each was an AttributeError that fired
+the instant a client connected or the session tore down — so no session ever worked.
+- _send_session(): self.state.display → self.backend.display_info.get("display").
+- _accept_proxy(): self.state.clipboard.read_text() → self.config.clipboard_enabled
+  + self.backend.get_clipboard().
+- shutdown(): self.state.xinput/.desktop/.xvfb → self.backend.shutdown()
+  (Xvfb/desktop processes were also leaking on teardown).
+
+### Fixed — modifier-key bracketing in XInputController.key() (server/x11.py)
+Previously each modifier was pressed AND released inside every call, so for a combo
+like Ctrl+C the Ctrl was released before C's own key event completed. Now: on key
+down we press modifiers then the key (leaving modifiers held); on key up we release
+the key then the modifiers in reverse. Combos and held modifiers now register correctly.
+
+### Verified working end-to-end after the fixes
+- Real Linux desktop per session: isolated Xvfb display + xauth cookie + desktop
+  command (startxfce4 / openbox / fluxbox / i3 / xterm fallback).
+- Full input capture: absolute mouse move, buttons, scroll, keyboard with modifiers (XTEST).
+- Cursor embedded into frames via XFixes overlay.
+- Bidirectional clipboard: xclip poll (server→client) + set_clipboard (client→server).
+- File transfer: SFTP client in the GUI (browse, mkdir, drag-and-drop upload, download).
+
+### Next step
+- Wire up the delta video path (currently dead: X11Backend.capture_frame returns JPEG so
+  the 64×64 delta branch never runs) for the promised bandwidth savings.
