@@ -32,6 +32,35 @@ remote_ssh_desktop/
 └── crypto/keygen.py        # SSH key generation
 ```
 
+## Download and run
+
+Download the latest release from the [Releases page](https://github.com/uiper123/TGIO_APRG/releases).
+
+| Platform | Artifact | What you need on the host |
+|---|---|---|
+| **Linux server** | `remote-ssh-desktop-server-linux-x86_64` | `Xvfb xauth xclip xterm` — run `bash scripts/install_server_deps.sh` |
+| **Linux client** | `remote-ssh-desktop-client-linux-x86_64` | Qt/xcb runtime libs — run `bash scripts/install_client_deps.sh` |
+| **Windows client** | `remote-ssh-desktop-client-windows-x86_64.exe` | Nothing — Qt is bundled in the .exe |
+
+**Linux server quick start:**
+
+```bash
+chmod +x remote-ssh-desktop-server-linux-x86_64
+bash scripts/install_server_deps.sh          # one-time
+./remote-ssh-desktop-server-linux-x86_64 --self-test   # verify
+```
+
+**Linux client quick start:**
+
+```bash
+chmod +x remote-ssh-desktop-client-linux-x86_64
+bash scripts/install_client_deps.sh          # one-time
+./remote-ssh-desktop-client-linux-x86_64
+```
+
+> **Note:** The Linux client binary currently requires system Qt/xcb libraries.
+> AppImage packaging (fully self-contained, no system deps) is planned as a future improvement.
+
 ## Install from source
 
 ```bash

@@ -236,3 +236,19 @@
 
 ### Next step
 - Continue with Prompt 3: self-contained launch / clear dependency docs for each platform.
+
+## Cycle 13 completed — 2026-06-14
+
+### Done
+- Added `_check_server_deps_or_exit()` to `server/main.py`: checks for Xvfb/xauth/xclip/xterm
+  before any X11 session starts; exits with apt/dnf install command on first missing binary.
+- Created `scripts/install_server_deps.sh` (Debian/Ubuntu + Fedora/RHEL + yum fallback).
+- Created `scripts/install_client_deps.sh` (Qt/xcb runtime libs for Linux client binary).
+- Added "Download and run" section to README with per-platform dependency table and quick-start commands.
+- Evaluated AppImage vs --onedir for Linux client:
+  - AppImage: truly self-contained, single file, but requires appimagetool + linuxdeploy in CI.
+  - --onedir + launcher: simpler but ships as multi-file tarball, still requires system Qt libs.
+  - Decision: ship install_client_deps.sh now; AppImage via linuxdeploy tracked as future work.
+
+### Next step
+- Continue with Prompt 4: TOFU host key verification (fix MITM vulnerability).

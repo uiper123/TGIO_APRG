@@ -22,6 +22,33 @@ from remote_ssh_desktop.version import __version__
 LOG = setup_logging("remote-ssh-desktop.server")
 
 
+
+def _check_server_deps_or_exit() -> None:
+    """Check for required system binaries before starting an X11 session.
+
+    Exits with a clear, actionable error message when any binary is missing
+    so users don't see an opaque crash deep inside Xvfb setup.
+    """
+    import shutil
+
+    required = ("Xvfb", "xauth", "xclip", "xterm")
+    missing = [cmd for cmd in required if not shutil.which(cmd)]
+    if not missing:
+        return
+    missing_str = " ".join(missing)
+    print(
+        f"\nERROR: missing required server dependencies: {missing_str}\n"
+        "\nInstall on Debian / Ubuntu:"
+        "\n  sudo apt-get install -y xvfb xauth xclip xterm"
+        "\n\nInstall on Fedora / RHEL:"
+        "\n  sudo dnf install -y xorg-x11-server-Xvfb xorg-x11-xauth xclip xterm"
+        "\n\nOr use the bundled script:"
+        "\n  bash scripts/install_server_deps.sh\n",
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
+
+
 def session_root(session_id: str) -> Path:
     return Path.home() / ".cache" / "remote-ssh-desktop" / session_id
 
@@ -274,6 +301,7 @@ def main() -> None:
         return
     if args.stop_session:
         raise SystemExit(0 if stop_session(args.stop_session) else 1)
+    _check_server_deps_or_exit()
     session_id = args.session_id or os.environ.get("REMOTE_SSH_DESKTOP_SESSION") or os.urandom(6).hex()
     if args.worker:
         worker = SessionWorker(
