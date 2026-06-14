@@ -44,7 +44,27 @@ jobs:
             artifact: remote-ssh-desktop-client-windows-x86_64
             script: scripts/build_client_windows.ps1
             binary: dist/remote-ssh-desktop.exe
-
+          - os: macos-latest
+            name: client-macos
+            kind: client
+            build_name: remote-ssh-desktop
+            artifact: remote-ssh-desktop-client-macos-arm64
+            script: scripts/build_client_linux.sh
+            binary: dist/remote-ssh-desktop
+          - os: ubuntu-24.04-arm
+            name: client-linux-arm64
+            kind: client
+            build_name: remote-ssh-desktop
+            artifact: remote-ssh-desktop-client-linux-arm64
+            script: scripts/build_client_linux.sh
+            binary: dist/remote-ssh-desktop
+          - os: ubuntu-24.04-arm
+            name: server-linux-arm64
+            kind: server
+            build_name: remote-ssh-desktop-server
+            artifact: remote-ssh-desktop-server-linux-arm64
+            script: scripts/build_server_linux.sh
+            binary: dist/remote-ssh-desktop-server
     steps:
       - name: checkout
         uses: actions/checkout@v4
@@ -74,6 +94,12 @@ jobs:
         run: |
           # No system deps required; PySide6 wheels bundle needed Qt runtime.
           Write-Host "windows deps ready"
+      - name: install macos deps
+        if: runner.os == 'macOS'
+        run: |
+          # PySide6 wheels bundle Qt runtime on macOS — no system packages needed.
+          # pynput is needed only for the macOS server backend (input injection).
+          pip install pynput || true
 
       - name: cache pip
         uses: actions/cache@v4
@@ -234,6 +260,9 @@ jobs:
             artifacts/**/remote-ssh-desktop-client-linux-x86_64
             artifacts/**/remote-ssh-desktop-server-linux-x86_64
             artifacts/**/remote-ssh-desktop-client-windows-x86_64.exe
+            artifacts/**/remote-ssh-desktop-client-macos-arm64
+            artifacts/**/remote-ssh-desktop-client-linux-arm64
+            artifacts/**/remote-ssh-desktop-server-linux-arm64
             artifacts/**/SHA256SUMS.txt
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
