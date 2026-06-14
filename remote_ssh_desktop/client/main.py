@@ -198,6 +198,7 @@ class TransportThread(QThread):
     clipboardReceived = Signal(str)
     disconnected = Signal(str)
     transferProgress = Signal(str, int, int)
+    videoDelta = Signal(bytes)  # delta bundle: blocks to composite onto last keyframe
     requestTofuDialog = Signal(str, str, str, object)  # host, key_type, fingerprint, callback
 
     def __init__(self, config: ClientConfig):
@@ -214,6 +215,7 @@ class TransportThread(QThread):
         self._frames_seen = 0
         self._dropped_frames = 0
         self._drops_since_last_stats = 0  # drops per ping interval, reset after each FRAME_STATS
+        self._last_keyframe: bytes = b""
         self._last_video_seq = 0  # last seen video frame sequence number
         self._active_transfers: set[str] = set()
         self._cancelled_transfers: set[str] = set()
@@ -282,21 +284,30 @@ class TransportThread(QThread):
         while self._running:
             frame = await read_frame(reader)
             if frame.kind == FRAME_VIDEO:
-                # Extract 4-byte sequence prefix (added in Cycle 15).
-                # If payload starts with \xff\xd8 it is a legacy raw JPEG (no seq prefix).
+                # Frame format (Cycle 15+):
+                #   bytes 0-3: big-endian uint32 sequence number
+                #   byte  4:   FLAG_DELTA (0x10) if delta bundle, else start of JPEG (0xFF 0xD8)
+                # Legacy format (no seq prefix): payload starts with 0xFF 0xD8
                 _pl = frame.payload
-                if len(_pl) >= 4 and _pl[0:2] != b'\xff\xd8':
+                if len(_pl) >= 5 and _pl[0:2] != b'\xff\xd8':
                     _seq = int.from_bytes(_pl[:4], 'big')
-                    _jpeg = _pl[4:]
                     if _seq > 0 and self._last_video_seq > 0 and _seq != self._last_video_seq + 1:
                         _gap = _seq - self._last_video_seq - 1
                         self._dropped_frames += _gap
                         self._drops_since_last_stats += _gap
                     self._last_video_seq = _seq
+                    if _pl[4] == 0x10:  # FLAG_DELTA — composite blocks onto buffer
+                        self._frames_seen += 1
+                        self.videoDelta.emit(_pl[5:])  # emit raw delta payload
+                    else:
+                        _jpeg = _pl[4:]  # full keyframe after seq prefix
+                        self._frames_seen += 1
+                        self._last_keyframe = _pl[4:]
+                        self.videoFrame.emit(_jpeg)
                 else:
-                    _jpeg = _pl  # legacy: no sequence prefix
-                self._frames_seen += 1
-                self.videoFrame.emit(_jpeg)
+                    # Legacy: raw JPEG, no seq
+                    self._frames_seen += 1
+                    self.videoFrame.emit(_pl)
             elif frame.kind == FRAME_CONTROL:
                 message = decode_message(frame.payload) if frame.payload else {}
                 t = message.get("t")

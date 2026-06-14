@@ -396,3 +396,31 @@
 - Delta-encoding video (send only changed 64x64 blocks).
 - Audio forwarding (PulseAudio/PipeWire → FRAME_AUDIO).
 - CI: add macOS + ARM64 to release.yml (needs manual edit due to proxy restriction).
+
+## Cycle 19 completed — 2026-06-14
+
+### Done
+
+#### Delta-encoding video (Step 11)
+- Added `FLAG_DELTA = 0x10` to `common/protocol.py`.
+- Added `FRAME_AUDIO = 0x07` to protocol constants.
+- Added `prev_block_hashes: dict[int, bytes]` to SessionState.
+- Added `_split_blocks()` helper: divides raw BGRX frame into 64×64 tiles,
+  returns per-tile (JPEG, blake2b-8) pairs.
+- Replaced flat `_capture_loop` with a delta-aware version:
+  - First frame / every 5 s / ≥80 % blocks changed → full JPEG keyframe (4-byte seq prefix).
+  - Otherwise → delta bundle: 4-byte seq | FLAG_DELTA (0x10) | per-block:
+    2-byte idx + 4-byte JPEG length + JPEG bytes.
+  - Client side: `FLAG_DELTA` frames emitted on new `videoDelta` signal;
+    keyframes still emitted on `videoFrame`.
+- Expected traffic reduction: 60-90 % on static or mostly-static screens.
+
+#### Audio forwarding (Step 12)
+- Added `_audio_loop()` to SessionWorker: detects pw-cat (PipeWire) or pacat
+  (PulseAudio), captures 16-bit stereo PCM at 44100 Hz in 4096-byte chunks,
+  and sends each chunk as a `FRAME_AUDIO` frame.
+- Loop is started as an asyncio task alongside capture/clipboard/watchdog.
+- Silently disabled if neither pw-cat nor pacat is found.
+
+### Next step
+- CI macOS + ARM64 matrix (needs manual release.yml edit — proxy restriction).

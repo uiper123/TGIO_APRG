@@ -17,11 +17,13 @@ FRAME_INPUT = 0x03
 FRAME_CLIPBOARD = 0x04
 FRAME_FILE = 0x05
 FRAME_STATS = 0x06
+FRAME_AUDIO = 0x07   # optional: PCM/opus audio forwarding
 
 FLAG_JSON = 0x01
 FLAG_KEYFRAME = 0x02
 FLAG_COMPRESSED = 0x04
 FLAG_RAW = 0x08
+FLAG_DELTA = 0x10  # FRAME_VIDEO payload is a delta bundle, not a full JPEG keyframe
 
 SUPPORTED_CODECS = {"jpeg"}
 
