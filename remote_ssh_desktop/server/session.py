@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 import hashlib
 import json
+import logging
 import os
 import subprocess
 import time
@@ -36,6 +37,8 @@ from remote_ssh_desktop.server.x11 import (
     make_session_env,
     wait_for_x,
 )
+
+LOG = logging.getLogger("remote-ssh-desktop.server.session")
 
 
 @dataclass(slots=True)
@@ -170,8 +173,10 @@ class SessionWorker:
                 frame = await read_frame(reader)
                 self._touch_proxy()
                 await self._dispatch(frame.kind, frame.payload)
-        except Exception:
-            pass
+        except (asyncio.IncompleteReadError, EOFError, ConnectionError) as exc:
+            LOG.debug("proxy disconnected for session %s: %s", self.config.session_id, exc)
+        except Exception as exc:
+            LOG.exception("proxy failed for session %s: %s", self.config.session_id, exc)
         finally:
             if self.state.current_writer is writer:
                 self.state.current_writer = None
@@ -321,8 +326,8 @@ class SessionWorker:
                     if text and text != self.state.last_local_clipboard:
                         self.state.last_local_clipboard = text
                         await self._send_frame(FRAME_CLIPBOARD, {"t": "clipboard", "format": "text", "data": text, "origin": "server"})
-            except Exception:
-                pass
+            except Exception as exc:
+                LOG.debug("clipboard poll failed for session %s: %s", self.config.session_id, exc, exc_info=True)
             await asyncio.sleep(0.75)
 
     async def _watchdog(self) -> None:

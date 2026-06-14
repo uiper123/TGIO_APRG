@@ -371,13 +371,29 @@ class TransportThread(QThread):
         with contextlib.suppress(Exception):
             await self._sftp.mkdir(self.remote_path(relative))
 
+    async def ensure_remote_parent_dirs(self, remote_relative: str) -> None:
+        if self._sftp is None:
+            raise RuntimeError("SFTP not ready")
+        parent = Path(normalize_remote_rel(remote_relative)).parent
+        if parent.as_posix() in {"", "."}:
+            return
+        current = Path("")
+        for part in parent.parts:
+            if part in {"", "."}:
+                continue
+            current = current / part
+            with contextlib.suppress(Exception):
+                await self._sftp.mkdir(self.remote_path(current.as_posix()))
+
     async def put_file(self, local_path: str, remote_relative: str, transfer_id: str):
         if self._sftp is None:
             raise RuntimeError("SFTP not ready")
         self._active_transfers.add(transfer_id)
         try:
             local = Path(local_path)
+            remote_relative = normalize_remote_rel(remote_relative)
             remote = self.remote_path(remote_relative)
+            await self.ensure_remote_parent_dirs(remote_relative)
             size = local.stat().st_size
             sent = 0
             with contextlib.suppress(Exception):

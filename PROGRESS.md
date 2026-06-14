@@ -3,64 +3,52 @@
 ## Audit — 2026-06-14 cycle 1
 
 ### Environment
-- Repository cloned to `/home/workspace/Projects/TGIO_APRG` on branch `main`, HEAD `2793d52`.
-- Python venv created in `.venv`; `requirements.txt` and `pytest` installed.
-- Debian/X11 packages installed for e2e: `xvfb`, `xauth`, `xclip`, `xterm`, X11/Qt runtime libraries.
+- Repository cloned to `/home/workspace/Projects/TGIO_APRG` on branch `main`, current base HEAD `1925965`.
+- Python venv recreated in `.venv`; `requirements.txt`, `requirements-build.txt`, and `pytest-timeout` installed.
+- Debian/X11 packages expected for e2e: `xvfb`, `xauth`, `xclip`, `xterm`, X11/Qt runtime libraries.
 
 ### Test baseline
-- Initial `python -m pytest -q`: `2 passed, 1 skipped` before installing X11 tools.
-- After installing X11 tools: `3 passed` including local Xvfb proxy video stream e2e.
+- Current verification after this cycle: `python -m pytest -q -x --timeout=60` → `9 passed`.
+- Import/help smoke: `python -m remote_ssh_desktop.crypto.keygen --help`, `QT_QPA_PLATFORM=offscreen timeout 10 python -m remote_ssh_desktop.client.main --help`, `timeout 10 python -m remote_ssh_desktop.server.main --version` → OK.
+- Static build-script checks: `bash -n scripts/build_client_linux.sh scripts/build_server_linux.sh`; `--onefile` present in Linux and Windows build scripts → OK.
 
 ### Tree reviewed
-- `remote_ssh_desktop/client/main.py`: Qt client, SSH exec transport, clipboard, SFTP file manager.
+- `remote_ssh_desktop/client/main.py`: Qt client, SSH transport, clipboard, SFTP file manager.
 - `remote_ssh_desktop/server/main.py`: server CLI, persistent worker spawn, session listing/stopping, stdio bridge.
 - `remote_ssh_desktop/server/session.py`: X11 worker lifecycle, capture/input/clipboard loops, adaptive quality.
 - `remote_ssh_desktop/server/x11.py`: Xvfb/XAUTHORITY/capture/XTEST/xclip helpers.
 - `remote_ssh_desktop/common/protocol.py`: framed protocol.
-- `remote_ssh_desktop/common/files.py`: SFTP shared-folder path normalization.
+- `remote_ssh_desktop/common/files.py`: SFTP shared-folder jail path normalization.
 - `remote_ssh_desktop/crypto/keygen.py`: SSH key generation.
 - PyInstaller specs/scripts and `.github/workflows/release.yml`.
-- `tests/`: protocol/jail tests and Xvfb e2e proxy test.
+- `tests/`: protocol/jail/config/keygen/UI and Xvfb e2e proxy tests.
 
 ### Explicit findings
 
 #### TODO/mock/fake/hardcoded/stub scan
-- No `TODO`, `FIXME`, `NotImplementedError`, `mock`, `dummy`, or fake-data implementation found in functional code.
-- `pass`/silent exception paths found and still need hardening:
-  - `remote_ssh_desktop/server/session.py`: `_accept_proxy()` swallows disconnect/read errors; `_clipboard_loop()` swallows clipboard errors.
-  - `remote_ssh_desktop/server/main.py`: stdio/socket bridge threads swallow copy errors.
-  - These are not feature stubs, but they hide failures from logs.
-- `xtest.fake_input` occurrences in `server/x11.py` are real XTEST calls, not fake/mock code.
+- Current scan finds no `TODO`, `FIXME`, `NotImplementedError`, `pass`, `mock`, `dummy`, or hardcoded functional stub in `remote_ssh_desktop/`, `tests/`, `scripts/`, workflow, specs, and docs.
+- `xtest.fake_input` occurrences in `server/x11.py` are real XTEST API calls, not fake/mock code.
 
 #### README feature coverage
 - Present in code and covered at least partly: SSH-only exec transport, JPEG frame protocol, Xvfb isolated sessions, XAUTHORITY, XTEST input, clipboard via xclip, SFTP browse/upload/download/resume, key generation, protocol tests, Xvfb e2e smoke.
-- Present in code but weakly tested/needs deeper verification: persistent reconnect/resume session lifecycle, idle timeout cleanup, max-session limit, adaptive FPS/quality, clipboard origin loop prevention, file-transfer cancellation/resume edge cases.
-- README/release mismatch found: release workflow currently packages directories/archives, while the requirement is one single executable asset per OS role.
-- UI technically functional but visually unfinished: default widgets, weak validation/error feedback, single global progress bar, no polished theme toggle, no toasts/spinners, file manager is list-only.
-- Wayland fallback is implemented via `QT_QPA_PLATFORM=wayland;xcb`, but not tested in CI.
+- Present in code but still needs deeper verification: persistent reconnect/resume session lifecycle, idle timeout cleanup, max-session limit, adaptive FPS/quality, clipboard origin loop prevention, transfer cancellation/resume edge cases.
+- Release one-file support is present in scripts/workflow, but a real CI artifact download/start check still needs to be done after the next tag/workflow run.
+- UI has been modernized in current HEAD, but still needs a product-level pass on file manager polish, toasts/spinners, and resize/Wayland behavior.
 
-#### Paths that can fail or silently do little
-- File manager actions return silently when disconnected or no file selected.
-- Connection config parsing can raise on invalid screen text before showing a friendly validation error.
-- SFTP upload does not create missing remote parent directories before upload.
-- Build scripts do not pass `--onefile` and release workflow re-wraps PyInstaller output directories.
+## Cycle 1 completed — 2026-06-14
 
-## Cycle 1 plan
+### Done
+- Hardened SFTP uploads: `TransportThread.put_file()` now normalizes the destination and creates missing remote parent directories inside the configured jail before resuming/writing.
+- Added regression test for recursive remote parent-directory creation with a fake async SFTP backend.
+- Replaced silent server proxy/clipboard exception swallowing with debug/exception logging in `server/main.py` and `server/session.py`.
+- Updated `CHANGELOG.md`.
 
-Priority scope: improve release correctness and harden the basic path without destabilizing the protocol.
+### Verified
+- `python -m pytest -q -x --timeout=60` → `9 passed`.
+- `python -m compileall -q remote_ssh_desktop tests` → OK.
+- CLI/help smoke checks for keygen, headless client `--help`, and server `--version` → OK.
+- `bash -n` for Linux build scripts → OK.
+- Stub scan for functional code/docs/workflow → no remaining `pass`/TODO/mock-style findings other than real `xtest.fake_input` calls.
 
-1. Convert PyInstaller build scripts/workflow to real one-file artifacts for Linux client, Linux server, and Windows client.
-2. Add version metadata in package code and keep SemVer/CHANGELOG aligned.
-3. Add friendly client-side validation before connecting and prevent invalid screen/auth states from throwing raw exceptions.
-4. Harden SFTP upload by creating remote parent directories and add tests for jail normalization/resume helpers where feasible.
-5. Replace silent server exception swallowing with debug logging where it matters.
-
-Verification for this cycle:
-- `python -m pytest -q`
-- Xvfb e2e remains green.
-- Build-script static check confirms `--onefile` and workflow asset layout points to single files.
-- Commit with conventional message if checks pass.
-
-## Cycle 1 result
-
-_Not completed yet._
+### Next step
+- Continue with one focused gap: add tests for session lifecycle controls (`--persistent`, `--resume`, idle timeout, `--list-sessions`, `--stop-session`) using short-lived Xvfb worker/proxy runs with timeouts, then fix any lifecycle bugs found.

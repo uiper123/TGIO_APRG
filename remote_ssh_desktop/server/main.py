@@ -147,8 +147,8 @@ def bridge_stdio(socket_path: str) -> None:
                     if not data:
                         break
                     sock.sendall(data)
-            except Exception:
-                pass
+            except Exception as exc:
+                LOG.debug("stdin-to-session bridge stopped: %s", exc, exc_info=True)
             finally:
                 with contextlib.suppress(Exception):
                     sock.shutdown(socket.SHUT_WR)
@@ -161,8 +161,8 @@ def bridge_stdio(socket_path: str) -> None:
                     if not data:
                         break
                     os.write(1, data)
-            except Exception:
-                pass
+            except Exception as exc:
+                LOG.debug("session-to-stdout bridge stopped: %s", exc, exc_info=True)
             finally:
                 stop.set()
 

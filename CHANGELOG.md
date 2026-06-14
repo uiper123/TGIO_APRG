@@ -14,6 +14,11 @@ project adheres to [Semantic Versioning](https://semver.org/).
 - SHA-256 checksums for all release artifacts
 - Auto-generated release notes with changelog bullets and artifact table
 - Release checklist issue template
+- SFTP uploads now create missing remote parent directories before resuming/writing files.
+- Regression coverage for recursive SFTP parent-directory creation.
+
+### Changed
+- Server proxy and clipboard loops now log disconnect/clipboard failures instead of silently swallowing them.
 
 ### Notes
 - Cut the first release with `git tag -s v0.1.0 -m "v0.1.0" && git push origin v0.1.0`

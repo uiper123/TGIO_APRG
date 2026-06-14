@@ -7,7 +7,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import pytest
 from PySide6.QtWidgets import QApplication, QMessageBox
 
-from remote_ssh_desktop.client.main import MainWindow, apply_theme
+from remote_ssh_desktop.client.main import MainWindow, TransportThread, ClientConfig, apply_theme
 from remote_ssh_desktop.version import __version__
 
 
@@ -40,3 +40,45 @@ def test_connection_validation_reports_missing_required_fields(app, monkeypatch)
         assert "Fix connection settings" in window.status.text()
     finally:
         window.close()
+
+
+def test_put_file_creates_remote_parent_directories(tmp_path):
+    class FakeAttrs:
+        size = 0
+
+    class FakeRemoteFile:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def write(self, chunk: bytes):
+            return None
+
+    class FakeSFTP:
+        def __init__(self):
+            self.mkdir_calls = []
+            self.open_calls = []
+
+        async def mkdir(self, path: str):
+            self.mkdir_calls.append(path)
+
+        async def stat(self, path: str):
+            raise FileNotFoundError(path)
+
+        def open(self, path: str, mode: str):
+            self.open_calls.append((path, mode))
+            return FakeRemoteFile()
+
+    local = tmp_path / "payload.bin"
+    local.write_bytes(b"abc")
+    transport = TransportThread(ClientConfig(shared_folder="/srv/shared"))
+    fake_sftp = FakeSFTP()
+    transport._sftp = fake_sftp
+
+    import asyncio
+    asyncio.run(transport.put_file(str(local), "nested/deep/payload.bin", "t1"))
+
+    assert fake_sftp.mkdir_calls == ["/srv/shared/nested", "/srv/shared/nested/deep"]
+    assert fake_sftp.open_calls == [("/srv/shared/nested/deep/payload.bin", "wb")]
