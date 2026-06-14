@@ -36,24 +36,7 @@ echo "=== remote-ssh-desktop installer ==="
 echo "OS: $OS_ID | Arch: $ARCH_SUFFIX | Component: $COMPONENT"
 echo
 
-# ── Get latest release tag ────────────────────────────────────────────────
-LATEST=$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" | grep '"tag_name"' | sed 's/.*"tag_name": "\(.*\)".*/\1/')
-if [ -z "$LATEST" ]; then
-    echo "WARNING: could not determine latest release tag (continuing with pip install)." >&2
-else
-    echo "Latest release: $LATEST"
-fi
-
-# ── Download helper ───────────────────────────────────────────────────────
-download_artifact() {
-    local name="$1"
-    local dest="$2"
-    local url="https://github.com/$REPO/releases/download/$LATEST/$name"
-    echo "Downloading $name..."
-    curl -fsSL -o "$dest" "$url"
-    chmod +x "$dest"
-    echo "Installed: $dest"
-}
+# (No GitHub release lookup needed — we install the package from git via pip.)
 
 # ── Install server ────────────────────────────────────────────────────────
 install_server() {
@@ -72,14 +55,9 @@ install_server() {
 # ── Install client ────────────────────────────────────────────────────────
 install_client() {
     if [ "$OS_ID" = "macos" ]; then
-        echo "macOS client: downloading .app.zip..."
-        local artifact="remote-ssh-desktop-client-macos-$ARCH_SUFFIX.zip"
-        curl -fsSL -o /tmp/rsd-client.zip "https://github.com/$REPO/releases/download/$LATEST/$artifact" || {
-            echo "macOS build not yet available in this release." >&2
-            exit 1
-        }
-        unzip -q /tmp/rsd-client.zip -d /Applications/
-        echo "macOS client installed to /Applications/Remote SSH Desktop.app"
+        echo "macOS client: installing via pip..."
+        ensure_python
+        pip_install_pkg
     else
         echo "Installing Qt/xcb runtime dependencies..."
         install_client_deps_inline
@@ -170,7 +148,6 @@ install_server_deps() {
 }
 
 # ── Main ──────────────────────────────────────────────────────────────────
-mkdir -p "$INSTALL_DIR"
 
 case "$COMPONENT" in
     server) install_server ;;
