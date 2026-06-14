@@ -444,3 +444,18 @@
 ### Next step
 - Optional: bandwidth/latency history graph, audio enable toggle (needs server --audio flag),
   multi-monitor selection.
+
+## Cycle 21 completed — 2026-06-14
+
+### Done — UI batch 2 (Monitor tab, hotkeys, recording)
+- Monitor tab: live ping + bandwidth sparkline graphs (SparklineWidget) and a
+  connection event log with a Clear button. Graphs are fed from update_stats_label,
+  the log captures every _set_status message with a timestamp.
+- Keyboard shortcuts (_register_hotkeys via QShortcut):
+  F11 fullscreen, Ctrl+S screenshot, Ctrl+D disconnect, Ctrl+Enter connect,
+  Ctrl+R toggle recording, Ctrl+L clear log.
+- Session recording: "Record" toolbar button / Ctrl+R captures incoming keyframes
+  (capped at 1800) and saves them as an animated WebP (or GIF) via Pillow — no new deps.
+
+### Next step
+- Optional: audio enable toggle (needs server --audio flag), multi-monitor selection.

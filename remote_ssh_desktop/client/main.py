@@ -16,7 +16,7 @@ from typing import Any, Callable
 
 import asyncssh
 from PySide6.QtCore import QPointF, QThread, Qt, Signal, QTimer
-from PySide6.QtGui import QAction, QColor, QImage, QKeyEvent, QKeySequence, QPainter
+from PySide6.QtGui import QAction, QColor, QImage, QKeyEvent, QKeySequence, QPainter, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -753,6 +753,58 @@ class KeyGenDialog(QWidget):
         self.generated.emit(str(private_path), str(public_path))
 
 
+class SparklineWidget(QWidget):
+    """Tiny live line graph for a rolling series of values (ping, bandwidth, etc.)."""
+
+    def __init__(self, title: str, unit: str, color: str = "#4da3ff", parent=None) -> None:
+        super().__init__(parent)
+        self._title = title
+        self._unit = unit
+        self._color = QColor(color)
+        self._values: list[float] = []
+        self._max_points = 120
+        self.setMinimumHeight(90)
+
+    def push(self, value: float) -> None:
+        self._values.append(max(0.0, float(value)))
+        if len(self._values) > self._max_points:
+            self._values = self._values[-self._max_points:]
+        self.update()
+
+    def clear(self) -> None:
+        self._values = []
+        self.update()
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        w, h = self.width(), self.height()
+        painter.fillRect(0, 0, w, h, QColor("#0e131b"))
+        pad = 8
+        gw, gh = w - 2 * pad, h - 2 * pad
+        # Title + current value
+        cur = self._values[-1] if self._values else 0.0
+        peak = max(self._values) if self._values else 1.0
+        avg = (sum(self._values) / len(self._values)) if self._values else 0.0
+        painter.setPen(QColor("#8aa0bd"))
+        painter.drawText(pad, pad + 10, f"{self._title}: {cur:.0f} {self._unit}  (avg {avg:.0f}, peak {peak:.0f})")
+        if len(self._values) < 2:
+            painter.end()
+            return
+        vmax = max(peak, 1.0)
+        n = len(self._values)
+        step = gw / max(n - 1, 1)
+        painter.setPen(self._color)
+        prev = None
+        for i, v in enumerate(self._values):
+            x = pad + i * step
+            y = pad + gh - (v / vmax) * gh * 0.8
+            if prev is not None:
+                painter.drawLine(int(prev[0]), int(prev[1]), int(x), int(y))
+            prev = (x, y)
+        painter.end()
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -772,6 +824,8 @@ class MainWindow(QMainWindow):
         self._last_frame_count = 0
         self._last_bytes_count = 0
         self._last_frame_bytes: bytes = b""
+        self._recording = False
+        self._recorded_frames: list[bytes] = []
         self._connection_started_at = 0.0
         self._connection_label = "—"
         self._child_windows: list[MainWindow] = []
@@ -789,6 +843,9 @@ class MainWindow(QMainWindow):
 
     def _set_status(self, text: str, busy: bool = False) -> None:
         self.status.setText(("⏳ " if busy else "● ") + text)
+        if hasattr(self, "connection_log"):
+            stamp = time.strftime("%H:%M:%S")
+            self.connection_log.append(f"[{stamp}] {text}")
 
     def _build_ui(self):
         toolbar = QToolBar("Remote controls")
@@ -801,6 +858,7 @@ class MainWindow(QMainWindow):
             ("Disconnect", self.disconnect_session),
             ("Fullscreen", self.toggle_fullscreen),
             ("Screenshot", self.save_screenshot),
+            ("Record", self.toggle_recording),
             ("Generate key", self.open_keygen),
             ("Self-test", self.run_self_test),
             ("Shortcuts", self.show_shortcuts_help),
@@ -822,8 +880,10 @@ class MainWindow(QMainWindow):
         self.session_tab = QWidget()
         self.files_tab = QWidget()
         self.diagnostics_tab = QWidget()
+        self.monitor_tab = QWidget()
         self.tabs.addTab(self.session_tab, "Desktop")
         self.tabs.addTab(self.files_tab, "Files")
+        self.tabs.addTab(self.monitor_tab, "Monitor")
         self.tabs.addTab(self.diagnostics_tab, "Diagnostics")
         self.setCentralWidget(self.tabs)
 
@@ -940,6 +1000,7 @@ class MainWindow(QMainWindow):
         session_layout.addLayout(status_row)
         self.clipboard = QApplication.clipboard()
         self.clipboard.dataChanged.connect(self.local_clipboard_changed)
+        self._register_hotkeys()
 
         files_layout = QVBoxLayout(self.files_tab)
         files_layout.setContentsMargins(14, 14, 14, 14)
@@ -990,6 +1051,30 @@ class MainWindow(QMainWindow):
         self.diagnostics_output.setPlainText("Self-test has not been run yet.")
         diagnostics_layout.addWidget(self.diagnostics_output, 1)
         self._last_diagnostic_report = None
+
+        # ── Monitor tab: live graphs + connection log ──────────────────────
+        monitor_layout = QVBoxLayout(self.monitor_tab)
+        monitor_layout.setContentsMargins(14, 14, 14, 14)
+        monitor_layout.setSpacing(12)
+        monitor_intro = QLabel("Live connection metrics and event log.")
+        monitor_intro.setProperty("muted", "true")
+        monitor_layout.addWidget(monitor_intro)
+        self.ping_graph = SparklineWidget("Ping", "ms", "#ffb454")
+        self.bw_graph = SparklineWidget("Bandwidth", "KB/s", "#4da3ff")
+        monitor_layout.addWidget(self.ping_graph)
+        monitor_layout.addWidget(self.bw_graph)
+        log_header = QHBoxLayout()
+        log_label = QLabel("Connection log")
+        log_label.setProperty("muted", "true")
+        self.clear_log_button = self._secondary(QPushButton("Clear log"))
+        self.clear_log_button.clicked.connect(self.clear_connection_log)
+        log_header.addWidget(log_label, 1)
+        log_header.addWidget(self.clear_log_button)
+        monitor_layout.addLayout(log_header)
+        self.connection_log = QTextEdit()
+        self.connection_log.setReadOnly(True)
+        self.connection_log.setMaximumBlockCount(500) if hasattr(self.connection_log, "setMaximumBlockCount") else None
+        monitor_layout.addWidget(self.connection_log, 1)
 
     def run_self_test(self):
         report = run_diagnostics(role="client")
@@ -1059,6 +1144,68 @@ class MainWindow(QMainWindow):
             self._set_status("Fix connection settings")
             return False
         return True
+
+    def _register_hotkeys(self) -> None:
+        """Register keyboard shortcuts for common actions."""
+        shortcuts = [
+            ("F11", self.toggle_fullscreen),
+            ("Ctrl+S", self.save_screenshot),
+            ("Ctrl+D", self.disconnect_session),
+            ("Ctrl+Return", self.connect_session),
+            ("Ctrl+R", self.toggle_recording),
+            ("Ctrl+L", self.clear_connection_log),
+        ]
+        for seq, handler in shortcuts:
+            sc = QShortcut(QKeySequence(seq), self)
+            sc.activated.connect(handler)
+
+    def clear_connection_log(self) -> None:
+        if hasattr(self, "connection_log"):
+            self.connection_log.clear()
+
+    def toggle_recording(self) -> None:
+        """Start/stop recording incoming keyframes to an animated WebP file."""
+        if self._recording:
+            self._recording = False
+            self._save_recording()
+            return
+        self._recorded_frames = []
+        self._recording = True
+        self._set_status("Recording started — press Ctrl+R or Record again to stop")
+
+    def _save_recording(self) -> None:
+        if not self._recorded_frames:
+            self._set_status("Recording stopped — no frames captured")
+            return
+        frames = self._recorded_frames
+        self._recorded_frames = []
+        default_name = f"remote-recording-{int(time.time())}.webp"
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save recording", default_name,
+            "Animated WebP (*.webp);;Animated GIF (*.gif);;All files (*)"
+        )
+        if not path:
+            self._set_status("Recording discarded")
+            return
+        try:
+            from io import BytesIO
+            from PIL import Image
+            images = []
+            for raw in frames:
+                try:
+                    images.append(Image.open(BytesIO(raw)).convert("RGB"))
+                except Exception:
+                    continue
+            if not images:
+                self._set_status("Recording failed: no decodable frames")
+                return
+            images[0].save(
+                path, save_all=True, append_images=images[1:],
+                duration=200, loop=0,
+            )
+            self._set_status(f"Recording saved: {path} ({len(images)} frames)")
+        except Exception as exc:
+            self._set_status(f"Recording failed: {exc}")
 
     def save_screenshot(self) -> None:
         """Save the most recent remote frame to a PNG/JPEG file."""
@@ -1143,6 +1290,13 @@ class MainWindow(QMainWindow):
         self.stats.setText(
             f"{dot} FPS {fps:.1f} · ping {ping_text} · {bw_text} · quality {quality}{drop_text}"
         )
+        if transport and hasattr(self, "ping_graph"):
+            latency = getattr(transport, "_last_latency_ms", 0)
+            if latency:
+                self.ping_graph.push(latency)
+            bytes_now2 = getattr(transport, "_bytes_received", 0)
+            self.bw_graph.push(max(bytes_now2 - getattr(self, "_graph_last_bytes", 0), 0) / elapsed / 1024.0)
+            self._graph_last_bytes = bytes_now2
         if hasattr(self, "connection_label"):
             if self._connection_started_at:
                 uptime = int(time.monotonic() - self._connection_started_at)
@@ -1488,6 +1642,8 @@ class MainWindow(QMainWindow):
         self._frames_rendered += 1
         if jpeg_bytes[:2] == b"\xff\xd8":
             self._last_frame_bytes = jpeg_bytes  # keep last full keyframe for screenshots
+            if self._recording and len(self._recorded_frames) < 1800:
+                self._recorded_frames.append(jpeg_bytes)
         self.display.setFrame(jpeg_bytes)
 
     def handle_disconnect(self, message: str):
