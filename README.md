@@ -129,6 +129,8 @@ The Desktop tab also has a **Quality preset** selector:
 - **Mobile** — 10 FPS / JPEG 55 for slow or metered connections
 - Any manual FPS/JPEG change marks the profile as **Custom** and is saved with the profile/history.
 
+The toolbar supports multiple simultaneous connections by opening another client window with **New Window**. If a saved profile is selected, the new window preloads it via `--profile`, so you can connect to a second host/session without interrupting the current one.
+
 ## Self-test diagnostics
 
 Before connecting, run the dependency self-test to catch missing local/server prerequisites early:

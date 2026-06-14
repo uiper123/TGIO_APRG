@@ -156,4 +156,19 @@
 - `QT_QPA_PLATFORM=offscreen timeout 120 python -m pytest -q tests/test_profiles.py tests/test_client_ui.py -x --timeout=60` → `11 passed`.
 
 ### Next step
-- Run full suite, commit, push, then continue with multi-session UI tabs/windows or richer file-manager actions.
+- Continue with multi-session UX: tab/window workflow, clearer active-connection labeling, and release artifact validation.
+
+## Cycle 8 completed — 2026-06-14
+
+### Done
+- Added toolbar **New Window** action for multiple simultaneous connections.
+- New client instances preload the selected saved profile via `--profile` when available, while leaving the current connection untouched.
+- Added UI regression coverage for the new-window launch command.
+- Updated README and CHANGELOG.
+
+### Verified
+- `python -m compileall -q remote_ssh_desktop tests` → OK.
+- `QT_QPA_PLATFORM=offscreen timeout 120 python -m pytest -q tests/test_client_ui.py -x --timeout=60` → `8 passed`.
+
+### Next step
+- Continue with clearer active-connection/session labeling and release artifact validation.

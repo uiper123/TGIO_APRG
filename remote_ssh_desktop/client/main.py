@@ -5,6 +5,8 @@ import contextlib
 import os
 import platform
 import shlex
+import subprocess
+import sys
 import time
 import uuid
 from dataclasses import dataclass
@@ -706,6 +708,7 @@ class MainWindow(QMainWindow):
         for text, handler in [
             ("Connect", self.connect_session),
             ("Quick Connect", self.quick_connect),
+            ("New Window", self.open_new_window),
             ("Disconnect", self.disconnect_session),
             ("Fullscreen", self.toggle_fullscreen),
             ("Generate key", self.open_keygen),
@@ -1256,6 +1259,22 @@ class MainWindow(QMainWindow):
         if self.transport:
             self.transport.stop()
             self._set_status("Disconnecting…", busy=True)
+
+
+    def open_new_window(self):
+        if getattr(sys, "frozen", False):
+            args = [sys.executable]
+        else:
+            args = [sys.executable, "-m", "remote_ssh_desktop.client.main"]
+        profile = self._current_profile_name()
+        if profile:
+            args.extend(["--profile", profile])
+        try:
+            subprocess.Popen(args, close_fds=True)
+        except Exception as exc:
+            QMessageBox.critical(self, "New window", str(exc))
+            return
+        self._set_status("New client window opened" + (f" with profile: {profile}" if profile else ""))
 
     def toggle_fullscreen(self):
         self.showNormal() if self.isFullScreen() else self.showFullScreen()

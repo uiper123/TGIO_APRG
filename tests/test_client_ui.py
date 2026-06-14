@@ -5,6 +5,7 @@ import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
+import subprocess
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from remote_ssh_desktop.client.main import MainWindow, TransportThread, ClientConfig, apply_theme, qt_user_role
@@ -170,5 +171,25 @@ def test_quality_presets_apply_and_custom_changes(app, tmp_path, monkeypatch):
         assert window.quality_edit.value() == 90
         window.quality_edit.setValue(88)
         assert window.quality_preset_combo.currentText() == "Custom"
+    finally:
+        window.close()
+
+
+def test_open_new_window_uses_current_profile(app, tmp_path, monkeypatch):
+    monkeypatch.setenv("REMOTE_SSH_DESKTOP_PROFILES", str(tmp_path / "profiles.json"))
+    launched = []
+    monkeypatch.setattr(subprocess, "Popen", lambda args, **kwargs: launched.append((args, kwargs)))
+    window = MainWindow()
+    try:
+        window._profiles["prod"] = {"host": "prod.example", "username": "alice", "key_file": "~/.ssh/id_rsd"}
+        window.refresh_profile_combo()
+        window.profile_combo.setCurrentText("prod")
+        window.open_new_window()
+        assert launched
+        args, kwargs = launched[0]
+        assert "--profile" in args
+        assert args[args.index("--profile") + 1] == "prod"
+        assert kwargs["close_fds"] is True
+        assert "New client window opened" in window.status.text()
     finally:
         window.close()
