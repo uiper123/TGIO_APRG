@@ -23,6 +23,7 @@ project adheres to [Semantic Versioning](https://semver.org/).
 - Client CLI `--profile NAME` and `--connect` for shortcut/script launches.
 - Quick Connect and recent-connection history with one-click reconnect, history clearing, capped non-secret storage, and CLI `--last`/`--recent`.
 - Client/server self-test diagnostics for Python modules, Linux X11 tools, Qt display environment, JSON/text export, and client Diagnostics tab.
+- Live localhost OpenSSH e2e coverage for the Qt transport, remote X11 session startup, video frames, SFTP upload/download, and clipboard write-through.
 
 ### Changed
 - Server proxy and clipboard loops now log disconnect/clipboard failures instead of silently swallowing them.
@@ -30,6 +31,7 @@ project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 - Reconnect/resume no longer consumes the worker Unix socket with a health-check probe before the real proxy bridge connects.
+- Client remote process streams are now opened in binary mode so framed protocol bytes survive AsyncSSH stdio transport unchanged.
 
 ### Notes
 - Cut the first release with `git tag -s v0.1.0 -m "v0.1.0" && git push origin v0.1.0`

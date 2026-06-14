@@ -124,3 +124,20 @@
 
 ### Next step
 - Continue with live local SSH e2e: spin up an isolated `sshd`, connect the Qt transport over localhost, verify session hello/frame flow plus SFTP upload/download/clipboard behavior, then fix any real transport issues found.
+
+## Cycle 6 completed — 2026-06-14
+
+### Done
+- Added a live localhost OpenSSH integration test that generates temporary host/user keys, starts isolated `sshd`, connects `TransportThread` over AsyncSSH, launches the real server proxy with Xvfb/xterm, and verifies session hello + JPEG frame delivery.
+- Extended the same e2e test to exercise SFTP upload/download through the actual client transport and OpenSSH SFTP subsystem.
+- Verified clipboard write-through from client protocol frame into the remote X11 clipboard with `xclip`.
+- Fixed a real transport bug: `TransportThread` now calls `create_process(..., encoding=None)` so protocol frames remain binary bytes instead of passing through text stdio handling.
+- Updated CHANGELOG.
+
+### Verified
+- `python -m compileall -q remote_ssh_desktop tests/test_e2e_ssh.py` → OK.
+- `QT_QPA_PLATFORM=offscreen timeout 180 python -m pytest -q tests/test_e2e_ssh.py -x -s --timeout=120` → `1 passed`.
+- Post-test process scan for project `remote_ssh_desktop`, Xvfb, xterm, and test sshd → no project leftovers.
+
+### Next step
+- Continue with quality presets LAN/WAN/Mobile wired into UI/profile/remote `set_quality`, tests for preset values, and documentation updates.

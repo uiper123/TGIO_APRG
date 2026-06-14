@@ -322,7 +322,7 @@ class TransportThread(QThread):
         self.statusChanged.emit("connecting…")
         self._conn = await asyncssh.connect(**kwargs)
         cmd = self.config.format_remote_command()
-        self._proc = await self._conn.create_process(cmd)
+        self._proc = await self._conn.create_process(cmd, encoding=None)
         self._sftp = await self._conn.start_sftp_client()
         self.statusChanged.emit("connected")
         hello = {
