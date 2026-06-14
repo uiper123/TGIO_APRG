@@ -598,8 +598,38 @@ class RemoteDisplayWidget(QFrame):
     def setFrame(self, jpeg_bytes: bytes) -> None:
         image = QImage.fromData(jpeg_bytes, "JPEG")
         if not image.isNull():
-            self._image = image
+            # Store in a paintable, copy-safe format so delta tiles can be
+            # composited directly onto this framebuffer.
+            self._image = image.convertToFormat(QImage.Format.Format_RGB32)
             self.update()
+
+    def applyDelta(self, payload: bytes) -> None:
+        """Composite a delta bundle of 64x64 JPEG tiles onto the current frame.
+
+        Payload layout (must match the server): repeated
+            2-byte tile index | 4-byte jpeg length | jpeg bytes
+        Tiles are row-major on a 64px grid; columns = ceil(frame_width / 64).
+        """
+        if self._image.isNull():
+            return  # no keyframe yet — wait for a full frame first
+        block = 64
+        cols = (self._image.width() + block - 1) // block
+        painter = QPainter(self._image)
+        i = 0
+        n = len(payload)
+        while i + 6 <= n:
+            idx = int.from_bytes(payload[i:i + 2], "big")
+            length = int.from_bytes(payload[i + 2:i + 6], "big")
+            i += 6
+            if i + length > n:
+                break
+            tile = QImage.fromData(payload[i:i + length], "JPEG")
+            i += length
+            if tile.isNull():
+                continue
+            painter.drawImage((idx % cols) * block, (idx // cols) * block, tile)
+        painter.end()
+        self.update()
 
     def _image_rect(self):
         if self._image.isNull():
@@ -1583,6 +1613,7 @@ class MainWindow(QMainWindow):
         self._pending_history_name = self._current_profile_name()
         self.transport = TransportThread(cfg)
         self.transport.videoFrame.connect(self.handle_video_frame)
+        self.transport.videoDelta.connect(self.handle_video_delta)
         self.transport.sessionInfo.connect(self.handle_session_info)
         self.transport.clipboardReceived.connect(self.handle_remote_clipboard)
         self.transport.statusChanged.connect(lambda text: self._set_status(text, "connecting" in text.lower() or "reconnecting" in text.lower()))
@@ -1645,6 +1676,10 @@ class MainWindow(QMainWindow):
             if self._recording and len(self._recorded_frames) < 1800:
                 self._recorded_frames.append(jpeg_bytes)
         self.display.setFrame(jpeg_bytes)
+
+    def handle_video_delta(self, payload: bytes) -> None:
+        self._frames_rendered += 1
+        self.display.applyDelta(payload)
 
     def handle_disconnect(self, message: str):
         self._connection_started_at = 0.0

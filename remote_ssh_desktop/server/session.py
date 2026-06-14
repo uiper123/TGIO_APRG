@@ -37,18 +37,18 @@ LOG = logging.getLogger("remote-ssh-desktop.server.session")
 
 _BLOCK_SIZE = 64  # pixels per block side; 64×64 = 4096 pixels each
 
-def _split_blocks(img_bytes: bytes, width: int, height: int) -> dict[int, tuple[bytes, bytes]]:
-    """Split a raw BGRX frame into (block_jpeg, block_hash) by 64x64 tile index.
+def _split_blocks(img, width: int, height: int, quality: int = 80) -> dict[int, tuple[bytes, bytes]]:
+    """Split a decoded RGB image into (block_jpeg, block_hash) by 64x64 tile index.
 
     Returns a dict mapping tile_index -> (jpeg_bytes, blake2b_hash).
-    Tiles are indexed row-major: tile 0 = top-left.
+    Tiles are indexed row-major (tile 0 = top-left); columns = ceil(width / 64).
+    The tile size and grid layout MUST stay in sync with the client compositor.
     """
-    from PIL import Image
     from io import BytesIO
-    img = Image.frombytes("RGB", (width, height), img_bytes, "raw", "BGRX")
     result: dict[int, tuple[bytes, bytes]] = {}
     cols = (width  + _BLOCK_SIZE - 1) // _BLOCK_SIZE
     rows = (height + _BLOCK_SIZE - 1) // _BLOCK_SIZE
+    q = max(20, min(95, int(quality)))
     for row in range(rows):
         for col in range(cols):
             x0 = col * _BLOCK_SIZE
@@ -57,12 +57,11 @@ def _split_blocks(img_bytes: bytes, width: int, height: int) -> dict[int, tuple[
             y1 = min(y0 + _BLOCK_SIZE, height)
             tile = img.crop((x0, y0, x1, y1))
             buf = BytesIO()
-            tile.save(buf, format="JPEG", quality=80, optimize=True)
+            tile.save(buf, format="JPEG", quality=q, optimize=True)
             jpeg = buf.getvalue()
             h = hashlib.blake2b(jpeg, digest_size=8).digest()
             result[row * cols + col] = (jpeg, h)
     return result
-
 
 
 @dataclass(slots=True)
@@ -326,79 +325,55 @@ class SessionWorker:
                 self.state.current_writer = None
 
     async def _capture_loop(self) -> None:
-        """Capture frames and stream to client using block-level delta encoding.
+        """Capture frames and stream them with 64x64 block-level delta encoding.
 
-        Each frame is split into 64×64 pixel blocks.  Only blocks whose JPEG
-        has changed since the last sent frame are transmitted.  The client
-        composites incoming blocks onto its framebuffer, giving 60-90 % traffic
-        reduction on static screens.
+        Each frame is decoded once, split into 64x64 tiles, and only the tiles
+        whose JPEG changed since the last sent frame are transmitted.  The client
+        composites incoming tiles onto its framebuffer, cutting traffic sharply on
+        mostly-static screens.
 
-        Full-frame fallback: if >80 % of blocks changed, or on the first frame,
-        or every 5 seconds, we send a full keyframe so the client can recover.
+        A full keyframe (plain JPEG after the 4-byte seq prefix) is sent on the
+        first frame, whenever >=80 % of tiles change, and at least every 5 seconds,
+        so a freshly-attached or de-synced client can always recover.
         """
-        last_sent = 0.0
+        from PIL import Image as _PILImage
+        from io import BytesIO as _BytesIO
+
         last_keyframe = 0.0
         KEYFRAME_INTERVAL = 5.0
-        KEYFRAME_THRESHOLD = 0.8  # full frame if ≥80 % blocks changed
+        KEYFRAME_THRESHOLD = 0.8
         while self.state.running:
             start = time.monotonic()
             if not self.state.client_ready:
                 await asyncio.sleep(0.05)
                 continue
             try:
-                # Capture raw frame for block splitting
-                import mss as _mss_mod
-                from PIL import Image as _PILImage
-                from io import BytesIO as _BytesIO
-                raw_frame, (fw, fh) = self.backend.capture_frame(quality=self.state.quality)
-                # If backend returns JPEG (not raw), fall back to full-frame mode
-                if raw_frame[:2] == b'\xff\xd8':
-                    jpeg = raw_frame
-                    digest = hashlib.blake2b(jpeg, digest_size=8).digest()
-                    send = digest != self.state.last_frame_digest or (time.monotonic() - last_sent) > 1.0
-                    if send:
-                        self.state.last_frame_digest = digest
-                        last_sent = time.monotonic()
-                        self.state.frames_sent += 1
-                        self.state.frames_seq += 1
-                        seq_prefix = self.state.frames_seq.to_bytes(4, "big")
-                        await self._send_frame(FRAME_VIDEO, seq_prefix + jpeg)
-                    delay = max(1.0 / max(self.state.fps, 1) - (time.monotonic() - start), 0.0)
-                    await asyncio.sleep(delay)
-                    continue
-            except Exception:
+                jpeg_full, (fw, fh) = self.backend.capture_frame(quality=self.state.quality)
+            except Exception as exc:
+                LOG.debug("capture error: %s", exc)
                 await asyncio.sleep(0.5)
                 continue
             try:
+                img = _PILImage.open(_BytesIO(jpeg_full)).convert("RGB")
+                blocks = _split_blocks(img, fw, fh, self.state.quality)
                 force_keyframe = (
                     not self.state.prev_block_hashes
                     or (time.monotonic() - last_keyframe) >= KEYFRAME_INTERVAL
                 )
-                # Re-decode jpeg to get raw pixel data for block splitting
-                img = _PILImage.open(_BytesIO(raw_frame))
-                raw_bgrx = img.convert("RGB").tobytes()
-                blocks = _split_blocks(raw_bgrx, fw, fh)
                 changed = [idx for idx, (_, h) in blocks.items()
                            if h != self.state.prev_block_hashes.get(idx)]
                 change_ratio = len(changed) / max(len(blocks), 1)
                 if force_keyframe or change_ratio >= KEYFRAME_THRESHOLD:
-                    # Send full keyframe
-                    buf = _BytesIO()
-                    img.save(buf, format="JPEG", quality=self.state.quality, optimize=True)
-                    jpeg = buf.getvalue()
-                    self.state.last_frame_digest = hashlib.blake2b(jpeg, digest_size=8).digest()
-                    last_sent = time.monotonic()
+                    self.state.last_frame_digest = hashlib.blake2b(jpeg_full, digest_size=8).digest()
                     last_keyframe = time.monotonic()
                     self.state.frames_sent += 1
                     self.state.frames_seq += 1
                     seq_prefix = self.state.frames_seq.to_bytes(4, "big")
-                    # Update all block hashes
                     self.state.prev_block_hashes = {idx: h for idx, (_, h) in blocks.items()}
-                    await self._send_frame(FRAME_VIDEO, seq_prefix + jpeg)
+                    await self._send_frame(FRAME_VIDEO, seq_prefix + jpeg_full)
                 elif changed:
-                    # Send delta: only changed blocks as a compact binary bundle
-                    # Format: 4-byte seq | 1-byte FLAG_DELTA (0x10) | for each block:
-                    #   2-byte block_idx (big-endian) | 4-byte block_jpeg_len | block_jpeg
+                    # Delta bundle: 4-byte seq | FLAG_DELTA | per block:
+                    #   2-byte block_idx | 4-byte jpeg_len | jpeg_bytes
                     self.state.frames_seq += 1
                     seq_prefix = self.state.frames_seq.to_bytes(4, "big")
                     delta_parts = [seq_prefix, bytes([FLAG_DELTA])]
@@ -409,9 +384,8 @@ class SessionWorker:
                         delta_parts.append(tile_jpeg)
                         self.state.prev_block_hashes[idx] = tile_hash
                     self.state.frames_sent += 1
-                    last_sent = time.monotonic()
                     await self._send_frame(FRAME_VIDEO, b"".join(delta_parts))
-                # else: nothing changed, skip frame
+                # else: nothing changed since the last frame — skip
             except Exception as exc:
                 LOG.debug("delta capture error: %s", exc)
             delay = max(1.0 / max(self.state.fps, 1) - (time.monotonic() - start), 0.0)

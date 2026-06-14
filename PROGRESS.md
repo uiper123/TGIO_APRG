@@ -489,3 +489,35 @@ the key then the modifiers in reverse. Combos and held modifiers now register co
 ### Next step
 - Wire up the delta video path (currently dead: X11Backend.capture_frame returns JPEG so
   the 64×64 delta branch never runs) for the promised bandwidth savings.
+
+## Cycle 23 completed — 2026-06-14
+
+### Done — wired the delta video path end-to-end (it was dead code on both sides)
+Delta encoding was committed earlier (589b1f2b) but never actually ran:
+- Server: X11Backend.capture_frame returns JPEG, so the capture loop's
+  "if frame starts with 0xFFD8" branch always won and short-circuited before the
+  delta logic. And _split_blocks fed that branch RGB bytes while interpreting them
+  as 4-byte BGRX — it would have crashed if ever reached.
+- Client: the parser emitted a videoDelta signal that was connected to nothing, and
+  RemoteDisplayWidget had no tile compositor — delta frames were silently dropped.
+
+Fixes:
+- server/session.py: _split_blocks now takes a decoded PIL RGB image (+ quality) and
+  crops 64x64 tiles directly. _capture_loop restructured: decode the captured JPEG
+  once, split into tiles, send a full keyframe (first frame / >=80% tiles changed /
+  every 5s) or a compact delta bundle of only the changed tiles otherwise.
+- client/main.py: RemoteDisplayWidget.setFrame stores frames as Format_RGB32 (paintable),
+  new applyDelta() composites incoming 64x64 JPEG tiles at the correct grid positions
+  (cols = ceil(width/64), matching the server). Connected the videoDelta signal to a
+  new handle_video_delta() handler.
+
+Result: static screens now send only changed tiles instead of full frames every tick,
+cutting bandwidth sharply; keyframes still recover any de-synced client within 5s.
+
+### Note
+- Session recording captures keyframes only (delta tiles aren't recorded); acceptable
+  for now since keyframes land at least every 5s.
+
+### Next step
+- Optional: record the composited frame after each delta so recordings are smooth;
+  audio enable toggle (needs server --audio flag); multi-monitor selection.
