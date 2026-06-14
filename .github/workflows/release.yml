@@ -139,8 +139,17 @@ jobs:
             *.exe) asset="dist/$artifact.exe" ;;
             *) asset="dist/$artifact" ;;
           esac
-          "$asset" --version
-          QT_QPA_PLATFORM=offscreen "$asset" --self-test
+          echo "--- smoke: $asset ($RUNNER_OS / ${{ matrix.kind }}) ---"
+          if [[ "$RUNNER_OS" == "Linux" && "${{ matrix.kind }}" == "client" ]]; then
+            timeout 30 "$asset" --version
+            timeout 120 xvfb-run -a "$asset" --self-test
+          elif [[ "$RUNNER_OS" == "Linux" && "${{ matrix.kind }}" == "server" ]]; then
+            timeout 30 "$asset" --version
+            timeout 120 "$asset" --self-test
+          else
+            "$asset" --version
+            QT_QPA_PLATFORM=offscreen "$asset" --self-test-json
+          fi
 
       - name: compute sha256
         shell: bash
