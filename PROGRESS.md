@@ -252,3 +252,23 @@
 
 ### Next step
 - Continue with Prompt 4: TOFU host key verification (fix MITM vulnerability).
+
+## Cycle 14 completed — 2026-06-14
+
+### Done
+- Fixed MITM vulnerability: replaced silent `known_hosts=None` default with TOFU.
+- `ClientConfig.verify_host_key: bool = True` added; `_connect_once` now defaults to
+  `~/.ssh/known_hosts` (created on first use with mode 0o600).
+- On unknown host: `asyncssh.HostKeyNotVerifiable` caught, `_ask_tofu()` emits
+  `requestTofuDialog` signal to Qt main thread; user sees fingerprint dialog; on accept
+  the key is appended to known_hosts and the connection is retried.
+- On changed host key: `asyncssh.HostKeyMismatch` caught, statusChanged emits a loud
+  warning message; connection is blocked.
+- Added explicit "Don't verify host key (insecure)" checkbox to the connection form;
+  unchecked by default — verification is ON unless the user opts out consciously.
+- `verify_host_key` persisted in profiles, QSettings, and profile import/export.
+- Added Host key verification section to README.
+- Updated profiles.py: `verify_host_key` in PROFILE_FIELDS and bool sanitize set.
+
+### Next step
+- Continue with Prompt 5: fix adaptive quality (drop reports always 0).

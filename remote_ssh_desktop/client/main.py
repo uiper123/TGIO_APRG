@@ -164,6 +164,7 @@ class ClientConfig:
     idle_timeout: int = 300
     shared_folder: str = "~/RemoteShared"
     known_hosts: str = ""
+    verify_host_key: bool = True
     clipboard_enabled: bool = True
     clipboard_max_bytes: int = 1_000_000
     reconnect_enabled: bool = True
@@ -197,6 +198,7 @@ class TransportThread(QThread):
     clipboardReceived = Signal(str)
     disconnected = Signal(str)
     transferProgress = Signal(str, int, int)
+    requestTofuDialog = Signal(str, str, str, object)  # host, key_type, fingerprint, callback
 
     def __init__(self, config: ClientConfig):
         super().__init__()
@@ -318,14 +320,35 @@ class TransportThread(QThread):
         self.config.quality = max(20, min(95, int(quality)))
         self.submit_frame(FRAME_CONTROL, {"t": "set_quality", "fps": self.config.fps, "quality": self.config.quality})
 
+    async def _ask_tofu(self, host: str, key_type: str, fingerprint: str) -> bool:
+        """Emit requestTofuDialog on the Qt main thread and await the user's decision."""
+        import asyncio
+        loop = asyncio.get_event_loop()
+        future: asyncio.Future[bool] = loop.create_future()
+
+        def _callback(accepted: bool) -> None:
+            loop.call_soon_threadsafe(future.set_result, accepted)
+
+        self.requestTofuDialog.emit(host, key_type, fingerprint, _callback)
+        return await future
+
     async def _connect_once(self) -> None:
         self._submit_queue = asyncio.Queue(maxsize=128)
         kwargs: dict[str, Any] = {
             "host": self.config.host,
             "port": self.config.port,
             "username": self.config.username or None,
-            "known_hosts": self.config.known_hosts or None,
         }
+        # ── Host-key verification (TOFU) ──────────────────────────────────
+        if not self.config.verify_host_key:
+            kwargs["known_hosts"] = None  # user explicitly disabled — insecure
+        else:
+            _kh = self.config.known_hosts.strip() if self.config.known_hosts else ""
+            kh_path = Path(_kh).expanduser() if _kh else Path.home() / ".ssh" / "known_hosts"
+            kh_path.parent.mkdir(parents=True, exist_ok=True)
+            if not kh_path.exists():
+                kh_path.touch(mode=0o600)
+            kwargs["known_hosts"] = str(kh_path)
         if self.config.password:
             kwargs["password"] = self.config.password
         if self.config.key_file:
@@ -334,8 +357,35 @@ class TransportThread(QThread):
                 kwargs["passphrase"] = self.config.key_passphrase
         if self.config.proxy_jump:
             kwargs["tunnel"] = self.config.proxy_jump
-        self.statusChanged.emit("connecting…")
-        self._conn = await asyncssh.connect(**kwargs)
+        self.statusChanged.emit("connecting\u2026")
+        try:
+            self._conn = await asyncssh.connect(**kwargs)
+        except asyncssh.HostKeyNotVerifiable as _exc:
+            # Unknown host — TOFU: ask user before adding to known_hosts
+            _srv_key = getattr(_exc, "key", None)
+            _fingerprint = _srv_key.get_fingerprint() if _srv_key else "unavailable"
+            _key_type = _srv_key.get_algorithm() if _srv_key else "unknown"
+            _accepted = await self._ask_tofu(self.config.host, _key_type, _fingerprint)
+            if not _accepted:
+                raise ConnectionError(
+                    f"Host key for {self.config.host!r} not accepted by user"
+                ) from _exc
+            if _srv_key is not None:
+                _kh_path = Path(str(kwargs.get("known_hosts") or Path.home() / ".ssh" / "known_hosts"))
+                try:
+                    _entry = asyncssh.export_known_hosts({self.config.host: [_srv_key]})
+                    with open(_kh_path, "a", encoding="utf-8") as _fh:
+                        _fh.write(_entry)
+                except Exception as _we:
+                    LOG.warning("Could not save host key to known_hosts: %s", _we)
+            self._conn = await asyncssh.connect(**kwargs)
+        except asyncssh.HostKeyMismatch:
+            self.statusChanged.emit(
+                f"\u26a0\ufe0f HOST KEY CHANGED for {self.config.host!r}! "
+                "This may indicate a man-in-the-middle attack. "
+                "If the server was rebuilt, remove the old entry from your known_hosts."
+            )
+            raise
         cmd = self.config.format_remote_command()
         self._proc = await self._conn.create_process(cmd, encoding=None)
         self._sftp = await self._conn.start_sftp_client()
@@ -761,6 +811,7 @@ class MainWindow(QMainWindow):
         self.screen_edit = QLineEdit("1920x1080")
         self.shared_folder_edit = QLineEdit("~/RemoteShared")
         self.known_hosts_edit = QLineEdit("")
+        self.verify_host_key_check = QCheckBox("Don't verify host key (insecure — disables MITM protection)")
         self.proxy_jump_edit = QLineEdit("")
         self.proxy_jump_edit.setPlaceholderText("Optional: bastion host alias or user@host")
         self.proxy_jump_edit.setObjectName("proxyJumpEdit")
@@ -830,6 +881,7 @@ class MainWindow(QMainWindow):
         form.addRow(self.persistent_check)
         form.addRow(self.clipboard_check)
         form.addRow(self.reconnect_check)
+        form.addRow(self.verify_host_key_check)
         session_layout.addWidget(box)
 
         self.display = RemoteDisplayWidget()
@@ -1000,6 +1052,7 @@ class MainWindow(QMainWindow):
         self.shared_folder_edit.setText(settings.value("shared_folder", self.shared_folder_edit.text()))
         self.session_id_edit.setText(settings.value("session_id", self.session_id_edit.text()))
         self.known_hosts_edit.setText(settings.value("known_hosts", ""))
+        self.verify_host_key_check.setChecked(not settings.value("verify_host_key", True, type=bool))
 
     def _save_defaults(self):
         from PySide6.QtCore import QSettings
@@ -1012,6 +1065,7 @@ class MainWindow(QMainWindow):
         settings.setValue("shared_folder", self.shared_folder_edit.text())
         settings.setValue("session_id", self.session_id_edit.text())
         settings.setValue("known_hosts", self.known_hosts_edit.text())
+        settings.setValue("verify_host_key", not self.verify_host_key_check.isChecked())
 
     def _load_profiles(self):
         try:
@@ -1158,6 +1212,7 @@ class MainWindow(QMainWindow):
         self.idle_timeout_edit.setValue(int(profile.get("idle_timeout", 300) or 300))
         self.shared_folder_edit.setText(str(profile.get("shared_folder", "~/RemoteShared")))
         self.known_hosts_edit.setText(str(profile.get("known_hosts", "")))
+        self.verify_host_key_check.setChecked(not bool(profile.get("verify_host_key", True)))
         self.clipboard_max_edit.setValue(int(profile.get("clipboard_max_bytes", 1_000_000) or 1_000_000))
         self.persistent_check.setChecked(bool(profile.get("persistent", False)))
         self.clipboard_check.setChecked(bool(profile.get("clipboard_enabled", True)))
@@ -1244,6 +1299,7 @@ class MainWindow(QMainWindow):
             quality_preset=self.quality_preset_combo.currentText(),
             persistent=self.persistent_check.isChecked(), idle_timeout=self.idle_timeout_edit.value(),
             shared_folder=self.shared_folder_edit.text().strip(), known_hosts=self.known_hosts_edit.text().strip(),
+            verify_host_key=not self.verify_host_key_check.isChecked(),
             clipboard_enabled=self.clipboard_check.isChecked(), clipboard_max_bytes=self.clipboard_max_edit.value(),
             reconnect_enabled=self.reconnect_check.isChecked(),
             proxy_jump=self.proxy_jump_edit.text().strip(),
@@ -1267,9 +1323,31 @@ class MainWindow(QMainWindow):
         self.transport.statusChanged.connect(lambda text: self._set_status(text, "connecting" in text.lower() or "reconnecting" in text.lower()))
         self.transport.disconnected.connect(self.handle_disconnect)
         self.transport.transferProgress.connect(self.handle_transfer_progress)
+        self.transport.requestTofuDialog.connect(self._show_tofu_dialog)
         self.transport.start()
         self._set_status("Connecting…", busy=True)
         self._save_defaults()
+
+    def _show_tofu_dialog(self, host: str, key_type: str, fingerprint: str, callback) -> None:
+        """Show a TOFU dialog asking the user to trust an unknown host key."""
+        msg = QMessageBox(self)
+        msg.setWindowTitle("Unknown Host Key")
+        msg.setIcon(QMessageBox.Icon.Warning)
+        msg.setText(
+            f"The host key for <b>{host}</b> is not in your known_hosts file.\n\n"
+            f"Key type: {key_type}\n"
+            f"Fingerprint (SHA256):\n  {fingerprint}\n\n"
+            "Do you trust this server and want to connect?"
+        )
+        msg.setInformativeText(
+            "If you trust this server, click Trust and the key will be saved "
+            "to your known_hosts for future connections without prompting."
+        )
+        accept_btn = msg.addButton("Trust and Connect", QMessageBox.ButtonRole.YesRole)
+        msg.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+        msg.setDefaultButton(accept_btn)
+        msg.exec()
+        callback(msg.clickedButton() is accept_btn)
 
     def disconnect_session(self):
         if self.transport:

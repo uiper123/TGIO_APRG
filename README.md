@@ -285,6 +285,18 @@ python -m pytest -q
 
 The test suite includes protocol/jail tests and a local Xvfb end-to-end proxy test when `Xvfb`, `xauth`, and `xterm` are available.
 
+
+### Host key verification
+
+By default the client uses **TOFU (Trust on First Use)**: it checks `~/.ssh/known_hosts` and,
+on first connection to an unknown host, shows a dialog with the server's SHA-256 fingerprint
+so you can verify it before saving.
+
+- To use a different known-hosts file, enter its path in the **Known hosts** field.
+- To disable verification entirely (⚠️ insecure), check **"Don't verify host key"** — this
+  is equivalent to `StrictHostKeyChecking=no` and leaves you open to MITM attacks.
+  Only use this for local/trusted networks.
+
 ## Current implementation choices
 
 - JPEG is the production codec in this implementation. `pyav` (H.264/H.265) is not a dependency and not included in builds; it is listed here as a future option if hardware-accelerated encoding is added.

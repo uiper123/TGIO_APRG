@@ -22,6 +22,7 @@ PROFILE_FIELDS = {
     "idle_timeout",
     "shared_folder",
     "known_hosts",
+    "verify_host_key",
     "clipboard_enabled",
     "clipboard_max_bytes",
     "reconnect_enabled",
@@ -58,7 +59,7 @@ def sanitize_profile(profile: dict[str, Any]) -> dict[str, Any]:
             clean[key] = int(value)
         elif key == "reconnect_delay":
             clean[key] = float(value)
-        elif key in {"persistent", "clipboard_enabled", "reconnect_enabled"}:
+        elif key in {"persistent", "clipboard_enabled", "reconnect_enabled", "verify_host_key"}:
             clean[key] = bool(value)
         elif key == "screen":
             if isinstance(value, str):
