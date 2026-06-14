@@ -272,3 +272,23 @@
 
 ### Next step
 - Continue with Prompt 5: fix adaptive quality (drop reports always 0).
+
+## Cycle 15 completed — 2026-06-14
+
+### Done
+- Fixed dead drop-report metric: `_dropped_frames` on the client was never incremented.
+- Server (`session.py`): added `frames_seq: int = 0` to `SessionState`; capture loop
+  now increments `frames_seq` per sent frame and prepends a 4-byte big-endian sequence
+  number to each JPEG payload (`seq.to_bytes(4, "big") + jpeg`).
+- Client (`client/main.py`): `_reader_loop` extracts the 4-byte prefix (if payload does
+  not start with \xff\xd8), detects sequence gaps, and increments both
+  `_dropped_frames` (cumulative) and `_drops_since_last_stats` (per-interval counter).
+- `_handle_pong` now reports the per-interval drop count and immediately resets
+  `_drops_since_last_stats` to 0, so the server\'s `dropped > 3` threshold is evaluated
+  per 2-second ping cycle, not cumulatively over the whole session.
+- `_apply_stats` on the server was already correct — no changes needed there.
+- README feature description "Adaptive FPS/JPEG quality based on client ping latency
+  and drop reports" is now accurate.
+
+### Next step
+- Continue with Prompt 6: align README and build process (fix broken build docs).

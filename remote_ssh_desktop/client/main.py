@@ -213,6 +213,8 @@ class TransportThread(QThread):
         self._last_pings: dict[float, float] = {}
         self._frames_seen = 0
         self._dropped_frames = 0
+        self._drops_since_last_stats = 0  # drops per ping interval, reset after each FRAME_STATS
+        self._last_video_seq = 0  # last seen video frame sequence number
         self._active_transfers: set[str] = set()
         self._cancelled_transfers: set[str] = set()
 
@@ -280,8 +282,21 @@ class TransportThread(QThread):
         while self._running:
             frame = await read_frame(reader)
             if frame.kind == FRAME_VIDEO:
+                # Extract 4-byte sequence prefix (added in Cycle 15).
+                # If payload starts with \xff\xd8 it is a legacy raw JPEG (no seq prefix).
+                _pl = frame.payload
+                if len(_pl) >= 4 and _pl[0:2] != b'\xff\xd8':
+                    _seq = int.from_bytes(_pl[:4], 'big')
+                    _jpeg = _pl[4:]
+                    if _seq > 0 and self._last_video_seq > 0 and _seq != self._last_video_seq + 1:
+                        _gap = _seq - self._last_video_seq - 1
+                        self._dropped_frames += _gap
+                        self._drops_since_last_stats += _gap
+                    self._last_video_seq = _seq
+                else:
+                    _jpeg = _pl  # legacy: no sequence prefix
                 self._frames_seen += 1
-                self.videoFrame.emit(frame.payload)
+                self.videoFrame.emit(_jpeg)
             elif frame.kind == FRAME_CONTROL:
                 message = decode_message(frame.payload) if frame.payload else {}
                 t = message.get("t")
@@ -312,7 +327,11 @@ class TransportThread(QThread):
         if sent_at is None:
             return
         latency_ms = int((time.monotonic() - sent_at) * 1000)
-        self.submit_frame(FRAME_STATS, {"t": "stats", "latency_ms": latency_ms, "dropped": self._dropped_frames})
+        # Report drops accumulated since the last ping interval, then reset.
+        # This gives the server a per-cycle count that matches its > 3 threshold.
+        _interval_drops = self._drops_since_last_stats
+        self._drops_since_last_stats = 0
+        self.submit_frame(FRAME_STATS, {"t": "stats", "latency_ms": latency_ms, "dropped": _interval_drops})
         self.statusChanged.emit(f"connected — {latency_ms} ms")
 
     def update_quality(self, fps: int, quality: int) -> None:

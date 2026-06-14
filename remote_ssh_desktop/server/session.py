@@ -76,6 +76,7 @@ class SessionState:
     quality: int = 80
     fps: int = 18
     frames_sent: int = 0
+    frames_seq: int = 0
     running: bool = True
     client_ready: bool = False
 
@@ -327,7 +328,11 @@ class SessionWorker:
                 self.state.last_frame_digest = digest
                 last_sent = time.monotonic()
                 self.state.frames_sent += 1
-                await self._send_frame(FRAME_VIDEO, jpeg)
+                self.state.frames_seq += 1
+                # Prefix 4-byte big-endian sequence number so the client can detect dropped frames.
+                # Clients that receive raw JPEG (seq=0 era) can detect the prefix by checking payload[0:2] != b'\xff\xd8'.
+                seq_prefix = self.state.frames_seq.to_bytes(4, "big")
+                await self._send_frame(FRAME_VIDEO, seq_prefix + jpeg)
             delay = max(1.0 / max(self.state.fps, 1) - (time.monotonic() - start), 0.0)
             await asyncio.sleep(delay)
 
