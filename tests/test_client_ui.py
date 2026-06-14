@@ -25,7 +25,7 @@ def test_main_window_constructs_with_modern_controls(app, tmp_path, monkeypatch)
     window = MainWindow()
     try:
         assert __version__ in window.windowTitle()
-        assert window.tabs.count() == 2
+        assert window.tabs.count() == 3
         assert window.theme_combo.count() == 2
         assert window.status.text().startswith("●")
         assert window.display.objectName() == "remoteDisplay"
@@ -33,6 +33,8 @@ def test_main_window_constructs_with_modern_controls(app, tmp_path, monkeypatch)
         assert window.proxy_jump_edit.objectName() == "proxyJumpEdit"
         assert window.recent_list.objectName() == "recentConnectionsList"
         assert window.quick_connect_button.text() == "Quick Connect"
+        assert window.self_test_button.text() == "Run self-test"
+        assert window.diagnostics_output.toPlainText().startswith("Self-test has not been run")
     finally:
         window.close()
 
@@ -139,5 +141,18 @@ def test_recent_history_appears_and_can_be_applied(app, tmp_path, monkeypatch):
         assert cfg.port == 2222
         assert cfg.username == "alice"
         assert cfg.screen == (1280, 720)
+    finally:
+        window.close()
+
+
+def test_self_test_ui_runs_and_exports(app, tmp_path, monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    monkeypatch.setenv("REMOTE_SSH_DESKTOP_PROFILES", str(tmp_path / "profiles.json"))
+    monkeypatch.setenv("REMOTE_SSH_DESKTOP_HISTORY", str(tmp_path / "history.json"))
+    window = MainWindow()
+    try:
+        window.run_self_test()
+        assert "Remote SSH Desktop self-test" in window.diagnostics_output.toPlainText()
+        assert window.export_self_test_button.isEnabled()
     finally:
         window.close()

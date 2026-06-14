@@ -35,12 +35,14 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSpinBox,
     QTabWidget,
+    QTextEdit,
     QToolBar,
     QVBoxLayout,
     QWidget,
     QStyleFactory,
 )
 
+from remote_ssh_desktop.common.diagnostics import report_to_text, run_diagnostics, save_report
 from remote_ssh_desktop.common.files import join_remote_jail, normalize_remote_rel
 from remote_ssh_desktop.common.protocol import (
     FRAME_CLIPBOARD,
@@ -694,6 +696,7 @@ class MainWindow(QMainWindow):
             ("Disconnect", self.disconnect_session),
             ("Fullscreen", self.toggle_fullscreen),
             ("Generate key", self.open_keygen),
+            ("Self-test", self.run_self_test),
             ("Ctrl+Alt+Del", lambda: self.send_combo(["ctrl", "alt"], "Delete")),
             ("Super", lambda: self.send_key("Super_L")),
             ("Esc", lambda: self.send_key("Escape")),
@@ -711,8 +714,10 @@ class MainWindow(QMainWindow):
         self.tabs = QTabWidget()
         self.session_tab = QWidget()
         self.files_tab = QWidget()
+        self.diagnostics_tab = QWidget()
         self.tabs.addTab(self.session_tab, "Desktop")
         self.tabs.addTab(self.files_tab, "Files")
+        self.tabs.addTab(self.diagnostics_tab, "Diagnostics")
         self.setCentralWidget(self.tabs)
 
         session_layout = QVBoxLayout(self.session_tab)
@@ -844,6 +849,49 @@ class MainWindow(QMainWindow):
         self.progress = QProgressBar()
         self.progress.setRange(0, 100)
         files_layout.addWidget(self.progress)
+
+        diagnostics_layout = QVBoxLayout(self.diagnostics_tab)
+        diagnostics_layout.setContentsMargins(14, 14, 14, 14)
+        diagnostics_layout.setSpacing(12)
+        diagnostics_intro = QLabel("Run a local dependency self-test before connecting or export the report for support.")
+        diagnostics_intro.setProperty("muted", "true")
+        diagnostics_layout.addWidget(diagnostics_intro)
+        diagnostics_buttons = QHBoxLayout()
+        self.self_test_button = QPushButton("Run self-test")
+        self.self_test_button.clicked.connect(self.run_self_test)
+        self.export_self_test_button = self._secondary(QPushButton("Export report…"))
+        self.export_self_test_button.clicked.connect(self.export_self_test_report)
+        self.export_self_test_button.setEnabled(False)
+        diagnostics_buttons.addWidget(self.self_test_button)
+        diagnostics_buttons.addWidget(self.export_self_test_button)
+        diagnostics_buttons.addStretch(1)
+        diagnostics_layout.addLayout(diagnostics_buttons)
+        self.diagnostics_output = QTextEdit()
+        self.diagnostics_output.setReadOnly(True)
+        self.diagnostics_output.setPlainText("Self-test has not been run yet.")
+        diagnostics_layout.addWidget(self.diagnostics_output, 1)
+        self._last_diagnostic_report = None
+
+    def run_self_test(self):
+        report = run_diagnostics()
+        self._last_diagnostic_report = report
+        text = report_to_text(report)
+        self.diagnostics_output.setPlainText(text)
+        self.export_self_test_button.setEnabled(True)
+        self.tabs.setCurrentWidget(self.diagnostics_tab)
+        self._set_status("Self-test passed" if report.ok else "Self-test found issues")
+
+    def export_self_test_report(self):
+        report = self._last_diagnostic_report or run_diagnostics()
+        path, _ = QFileDialog.getSaveFileName(self, "Export self-test report", "remote-ssh-desktop-self-test.txt", "Text files (*.txt);;JSON files (*.json);;All files (*)")
+        if not path:
+            return
+        try:
+            saved = save_report(report, path)
+        except Exception as exc:
+            QMessageBox.critical(self, "Self-test", str(exc))
+            return
+        self._set_status(f"Self-test report saved: {saved}")
 
     def validate_config(self) -> bool:
         errors: list[str] = []
@@ -1309,7 +1357,17 @@ def main() -> None:
     parser.add_argument("--profile", default="", help="load a saved connection profile by name")
     parser.add_argument("--connect", action="store_true", help="connect immediately after loading --profile")
     parser.add_argument("--last", "--recent", action="store_true", help="load and connect to the most recent connection from history")
+    parser.add_argument("--self-test", action="store_true", help="run dependency diagnostics and exit")
+    parser.add_argument("--self-test-json", action="store_true", help="print dependency diagnostics as JSON and exit")
     args = parser.parse_args()
+    if args.self_test or args.self_test_json:
+        report = run_diagnostics()
+        if args.self_test_json:
+            from remote_ssh_desktop.common.diagnostics import report_to_json
+            print(report_to_json(report), end="")
+        else:
+            print(report_to_text(report), end="")
+        raise SystemExit(0 if report.ok else 2)
     configure_qt_platform()
     app = QApplication(sys.argv[:1])
     apply_theme(app, "dark")

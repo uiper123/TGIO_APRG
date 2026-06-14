@@ -104,3 +104,23 @@
 
 ### Next step
 - Continue with Cycle 4 second priority: first-run self-test / diagnostics for client/server dependencies (`Xvfb`, `xauth`, `xclip`, `xterm`, Qt runtime, Python, asyncssh), with UI report/export, CLI `--self-test`, mocked tests for missing dependencies, then update PROGRESS/CHANGELOG/README and commit.
+
+## Cycle 5 completed — 2026-06-14
+
+### Done
+- Added shared self-test diagnostics module with text/JSON serialization and report saving.
+- Added client CLI `--self-test` / `--self-test-json`, toolbar Self-test action, Diagnostics tab, and report export.
+- Added server CLI `--self-test`, `--self-test-json`, and `--self-test-output` so remote hosts can be checked before launching an X11 session.
+- Diagnostics cover Python 3.11+, required Python modules, Linux X11 commands (`Xvfb`, `xauth`, `xclip`, `xterm`), and Qt display environment.
+- Added diagnostics unit tests and UI coverage.
+- Updated README and CHANGELOG.
+
+### Verified
+- `python -m compileall -q remote_ssh_desktop tests` → OK.
+- `QT_QPA_PLATFORM=offscreen timeout 120 python -m pytest -q tests/test_diagnostics.py tests/test_client_ui.py -x --timeout=60` → `9 passed`.
+- `QT_QPA_PLATFORM=offscreen timeout 120 python -m pytest -q -x --timeout=60` → `24 passed`.
+- `QT_QPA_PLATFORM=offscreen timeout 30 python -m remote_ssh_desktop.client.main --self-test` → PASS.
+- `QT_QPA_PLATFORM=offscreen timeout 30 python -m remote_ssh_desktop.server.main --self-test-json` → valid JSON, PASS.
+
+### Next step
+- Continue with live local SSH e2e: spin up an isolated `sshd`, connect the Qt transport over localhost, verify session hello/frame flow plus SFTP upload/download/clipboard behavior, then fix any real transport issues found.

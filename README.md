@@ -122,6 +122,19 @@ python -m remote_ssh_desktop.client.main --last
 python -m remote_ssh_desktop.client.main --recent
 ```
 
+## Self-test diagnostics
+
+Before connecting, run the dependency self-test to catch missing local/server prerequisites early:
+
+```bash
+remote-ssh-desktop-client --self-test
+remote-ssh-desktop-server --self-test
+remote-ssh-desktop-server --self-test-json
+remote-ssh-desktop-server --self-test-output remote-ssh-desktop-self-test.txt
+```
+
+The client also has a **Diagnostics** tab and toolbar **Self-test** action. Reports cover Python version/modules, Linux X11 tools (`Xvfb`, `xauth`, `xclip`, `xterm`), and Qt display environment. Text or JSON reports can be exported for support.
+
 ## Server CLI
 
 The server module is normally launched by the client over SSH, but it can be managed manually:

@@ -14,6 +14,7 @@ import time
 from pathlib import Path
 
 from remote_ssh_desktop.common.config import parse_screen
+from remote_ssh_desktop.common.diagnostics import report_to_json, report_to_text, run_diagnostics, save_report
 from remote_ssh_desktop.common.logging_setup import setup_logging
 from remote_ssh_desktop.server.session import SessionConfig, SessionWorker
 from remote_ssh_desktop.version import __version__
@@ -249,6 +250,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--log-file", default="")
     parser.add_argument("--verbose", action="store_true")
     parser.add_argument("--version", action="store_true", help="print version and exit")
+    parser.add_argument("--self-test", action="store_true", help="run dependency diagnostics and exit")
+    parser.add_argument("--self-test-json", action="store_true", help="print self-test diagnostics as JSON")
+    parser.add_argument("--self-test-output", default="", help="write self-test diagnostics to this file")
     return parser
 
 
@@ -257,6 +261,12 @@ def main() -> None:
     if args.version:
         print(f"remote-ssh-desktop-server {__version__}")
         return
+    if args.self_test or args.self_test_json or args.self_test_output:
+        report = run_diagnostics()
+        if args.self_test_output:
+            save_report(report, args.self_test_output)
+        print(report_to_json(report) if args.self_test_json else report_to_text(report), end="")
+        raise SystemExit(0 if report.ok else 2)
     global LOG
     LOG = setup_logging("remote-ssh-desktop.server", args.log_file or None, args.verbose)
     if args.list_sessions:
