@@ -40,12 +40,6 @@ jobs:
             artifact: remote-ssh-desktop-client-windows-x86_64
             script: scripts/build_client_windows.ps1
             binary: dist/remote-ssh-desktop.exe
-          - os: macos-13
-            name: client-macos
-            kind: client
-            artifact: remote-ssh-desktop-client-macos-arm64
-            script: scripts/build_client_macos.sh
-            binary: dist/remote-ssh-desktop
 
     steps:
       - name: checkout
@@ -69,12 +63,6 @@ jobs:
             libxcb-render0 libxcb-glx0 libxcb-image0 libxcb-keysyms1 \
             libxcb-icccm4 libxcb-sync1 libgl1 libgcc-s1 libstdc++6 \
             libpangocairo-1.0-0 libpango-1.0-0 libcairo2
-
-      - name: install macos deps
-        if: runner.os == 'macOS'
-        run: |
-          brew update
-          brew install xquartz 2>/dev/null || true
 
       - name: install windows deps
         if: runner.os == 'Windows'
@@ -122,7 +110,7 @@ jobs:
           artifact="${{ matrix.artifact }}"
           mkdir -p "dist/$artifact"
           candidate=""
-          for d in dist/remote-ssh-desktop dist/remote-ssh-desktop-server dist/client-linux dist/server-linux dist/client-windows dist/client-macos; do
+          for d in dist/remote-ssh-desktop dist/remote-ssh-desktop-server dist/client-linux dist/server-linux dist/client-windows; do
             if [ -d "$d" ]; then
               candidate="$d"
               break
@@ -222,8 +210,7 @@ jobs:
               "| Platform | File |\n|---|---|\n"
               "| Linux client (x86_64) | `remote-ssh-desktop-client-linux-x86_64.tar.gz` |\n"
               "| Linux server (x86_64) | `remote-ssh-desktop-server-linux-x86_64.tar.gz` |\n"
-              "| Windows client (x86_64) | `remote-ssh-desktop-client-windows-x86_64.zip` |\n"
-              "| macOS client (arm64) | `remote-ssh-desktop-client-macos-arm64.tar.gz` |\n\n"
+              "| Windows client (x86_64) | `remote-ssh-desktop-client-windows-x86_64.zip` |\n\n"
               "SHA-256 checksums are in `SHA256SUMS.txt`."
           )
           with open(os.environ["GITHUB_OUTPUT"], "w") as fh:
